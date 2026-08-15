@@ -32,6 +32,8 @@
 
 <div class="wrap" id="normal-wrap">
   <div id="nextshow-list"><div class="empty">กำลังโหลด...</div></div>
+  <div class="section-title" style="margin:20px 4px 6px;">✅ Already Played</div>
+  <div id="played-show-list"></div>
 </div>
 
 <!-- Split view — shown once a chord is opened "ในนี้": left 80% chord
@@ -170,7 +172,7 @@ function openChordNewTab(songId) {
 // never interrupt the chord a musician is currently reading.
 function renderSplitRightList() {
   const el = document.getElementById('split-song-list');
-  const list = state.nextShow;
+  const list = state.nextShow.filter(i => !i.played);
   if (!list.length) {
     el.innerHTML = '<div class="empty" style="padding:16px 4px;">ไม่มีคิวเพลง</div>';
     return;
@@ -181,7 +183,7 @@ function renderSplitRightList() {
     <div class="split-song-item ${s.id === currentChordSongId ? 'active' : ''}" data-split-song="${s.id}">
       <span class="order-num">${idx + 1}</span>
       <div class="info">
-        <div class="t">${escapeHtml(s.title)}${item.played ? ' ✅' : ''}</div>
+        <div class="t">${escapeHtml(s.title)}</div>
         <div class="a">${escapeHtml(s.artist || '')}</div>
       </div>
     </div>`;
@@ -202,12 +204,11 @@ window.addEventListener('resize', () => { if (currentChordSongId) applyPanelZoom
 
 function render() {
   const el = document.getElementById('nextshow-list');
-  const list = state.nextShow;
+  const list = state.nextShow.filter(i => !i.played);
   if (!list.length) {
     el.innerHTML = '<div class="empty">ทีมงานยังไม่ได้จัดคิวเพลงถัดไป</div>';
     closeChordPanel();
-    return;
-  }
+  } else {
   if (currentChordSongId && !list.some(i => i.song.id === currentChordSongId)) {
     closeChordPanel();
   }
@@ -215,11 +216,11 @@ function render() {
     const s = item.song;
     const musicians = Object.entries(s.musicianResponses || {});
     return `
-    <div class="card ${item.played ? 'played' : ''}">
+    <div class="card">
       <div class="row-flex">
         <span class="order-num">${idx + 1}</span>
         <div class="grow">
-          <h3 style="margin-bottom:0;">${escapeHtml(s.title)}${item.played ? ' ✅' : ''}</h3>
+          <h3 style="margin-bottom:0;">${escapeHtml(s.title)}</h3>
           <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
         </div>
       </div>
@@ -272,10 +273,37 @@ function render() {
     }
   }
 
+  }
+
   // Auto-refresh the compact right-hand queue too — it's a separate DOM
   // subtree from the iframe, so this never touches/reloads the chord that's
   // currently open on the left.
   renderSplitRightList();
+  renderPlayedShow();
+}
+
+// Read-only list of songs already marked "เล่นแล้ว" by admin for this event —
+// shown below the live queue so guests can see what's already been played.
+function renderPlayedShow() {
+  const el = document.getElementById('played-show-list');
+  if (!el) return;
+  const list = state.nextShow.filter(i => i.played);
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มีเพลงที่เล่นแล้ว</div>';
+    return;
+  }
+  el.innerHTML = list.map((item) => {
+    const s = item.song;
+    return `
+    <div class="card played">
+      <div class="row-flex">
+        <div class="grow">
+          <h3 style="margin-bottom:0;">${escapeHtml(s.title)} ✅</h3>
+          <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function loadState() {

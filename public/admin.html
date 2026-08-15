@@ -51,6 +51,8 @@
     </div>
     <div id="tab-show" style="display:none;">
       <div id="show-list"></div>
+      <div class="section-title" style="margin:20px 4px 6px;">✅ Already Played</div>
+      <div id="played-list"></div>
     </div>
     <div id="tab-tools" style="display:none;">
       <div class="card">
@@ -198,7 +200,7 @@ function renderPool() {
           <div class="artist" style="margin:0;">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}</div>
           <div class="small-note" style="margin:0;">${s.requestedBy ? 'เสนอโดย ' + escapeHtml(s.requestedBy) : 'ไม่ระบุผู้เสนอ'}</div>
         </div>
-        <button data-toggle="${s.id}">${isOpen ? '−' : '+'}</button>
+        <button data-toggle="${s.id}" class="${(!isChecked && !isOpen) ? 'btn-verify' : ''}">${isOpen ? '− ย่อ' : (isChecked ? '+ ขยาย' : '+ ตรวจ')}</button>
       </div>
       <div class="badge-row" style="margin-top:8px;">
         <span class="badge" style="color:${info.color};border-color:${info.color};">${info.label}</span>
@@ -298,12 +300,13 @@ function voterListHtml(voters) {
 
 function renderShow() {
   const el = document.getElementById('show-list');
-  const list = state.nextShow;
-  if (!list.length) { el.innerHTML = '<div class="empty">ยังไม่มีเพลงในคิว — ไปเพิ่มจากแท็บ "เพลงทั้งหมด"</div>'; return; }
+  const list = state.nextShow.filter(i => !i.played);
+  if (!list.length) { el.innerHTML = '<div class="empty">ยังไม่มีเพลงในคิว — ไปเพิ่มจากแท็บ "เพลงทั้งหมด"</div>'; }
+  else {
   el.innerHTML = list.map((item, idx) => {
     const s = item.song;
     return `
-    <div class="card ${item.played ? 'played' : ''}">
+    <div class="card">
       <div class="row-flex">
         <span class="order-num">${idx + 1}</span>
         <div class="grow">
@@ -314,7 +317,8 @@ function renderShow() {
       <div class="btn-row" style="margin-top:8px;">
         <button data-up="${s.id}" ${idx === 0 ? 'disabled' : ''}>▲ ขึ้น</button>
         <button data-down="${s.id}" ${idx === list.length - 1 ? 'disabled' : ''}>▼ ลง</button>
-        <button data-played="${s.id}" data-cur="${item.played}">${item.played ? '↩ ยังไม่เล่น' : '✅ เล่นแล้ว'}</button>
+        <button data-moveto="${s.id}" ${list.length < 3 ? 'disabled' : ''}>🔢 ย้ายไปที่...</button>
+        <button data-played="${s.id}">✅ เล่นแล้ว</button>
         <button data-remove="${s.id}" class="warn">เอาออกจากคิว</button>
       </div>
     </div>`;
@@ -322,22 +326,81 @@ function renderShow() {
 
   el.querySelectorAll('button[data-up]').forEach(b => b.addEventListener('click', () => reorder(b.dataset.up, -1)));
   el.querySelectorAll('button[data-down]').forEach(b => b.addEventListener('click', () => reorder(b.dataset.down, 1)));
+  el.querySelectorAll('button[data-moveto]').forEach(b => b.addEventListener('click', () => moveShowTo(b.dataset.moveto)));
   el.querySelectorAll('button[data-played]').forEach(b => b.addEventListener('click', async () => {
-    await adminPost('/api/admin/next-show/played', { songId: b.dataset.played, played: b.dataset.cur !== 'true' });
+    await adminPost('/api/admin/next-show/played', { songId: b.dataset.played, played: true });
+    showToast('บันทึกว่าเล่นแล้ว ✓');
   }));
   el.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', async () => {
     await adminPost('/api/admin/next-show/remove', { songId: b.dataset.remove });
     showToast('เอาออกจากคิวแล้ว');
   }));
+  }
+  renderPlayed();
 }
 
+// Read-only-ish history of songs marked "เล่นแล้ว" — no up/down reordering
+// (order doesn't matter once played), just an undo button in case of mistake.
+function renderPlayed() {
+  const el = document.getElementById('played-list');
+  const list = state.nextShow.filter(i => i.played);
+  if (!list.length) { el.innerHTML = '<div class="empty">ยังไม่มีเพลงที่เล่นแล้ว</div>'; return; }
+  el.innerHTML = list.map((item) => {
+    const s = item.song;
+    return `
+    <div class="card played">
+      <div class="row-flex">
+        <div class="grow">
+          <h3 style="margin-bottom:0;">${escapeHtml(s.title)} ✅</h3>
+          <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-played="${s.id}" data-cur="true">↩ ยังไม่เล่น</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('button[data-played]').forEach(b => b.addEventListener('click', async () => {
+    await adminPost('/api/admin/next-show/played', { songId: b.dataset.played, played: false });
+    showToast('ย้ายกลับเข้าคิวแล้ว');
+  }));
+}
+
+// Reorder only operates within the still-unplayed subset — played songs are
+// appended after, in their existing relative order, so their played flag
+// (looked up server-side) is preserved untouched.
 async function reorder(songId, dir) {
-  const order = state.nextShow.map(i => i.songId);
-  const idx = order.indexOf(songId);
+  const unplayed = state.nextShow.filter(i => !i.played).map(i => i.songId);
+  const idx = unplayed.indexOf(songId);
   const swapWith = idx + dir;
-  if (swapWith < 0 || swapWith >= order.length) return;
-  [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
+  if (idx === -1 || swapWith < 0 || swapWith >= unplayed.length) return;
+  [unplayed[idx], unplayed[swapWith]] = [unplayed[swapWith], unplayed[idx]];
+  const playedIds = state.nextShow.filter(i => i.played).map(i => i.songId);
+  const order = unplayed.concat(playedIds);
   await adminPost('/api/admin/next-show', { order, eventId: getEventId() });
+}
+
+// Jump a song directly to a chosen rank within the unplayed queue, instead
+// of pressing ▲/▼ one step at a time — handy for long queues.
+async function moveShowTo(songId) {
+  const unplayed = state.nextShow.filter(i => !i.played).map(i => i.songId);
+  const idx = unplayed.indexOf(songId);
+  if (idx === -1) return;
+  const input = prompt(`ย้ายไปตำแหน่งที่เท่าไหร่? (1-${unplayed.length})`, String(idx + 1));
+  if (input === null) return;
+  const raw = parseInt(input, 10);
+  if (!Number.isInteger(raw)) { showToast('กรุณาใส่ตัวเลข'); return; }
+  // Out-of-range numbers clamp to the nearest valid end (e.g. asking for
+  // position 28 in a 20-song queue just means "put it last").
+  const target = Math.min(Math.max(raw, 1), unplayed.length);
+  const targetIdx = target - 1;
+  if (targetIdx === idx) return;
+  unplayed.splice(idx, 1);
+  unplayed.splice(targetIdx, 0, songId);
+  const playedIds = state.nextShow.filter(i => i.played).map(i => i.songId);
+  const order = unplayed.concat(playedIds);
+  await adminPost('/api/admin/next-show', { order, eventId: getEventId() });
+  showToast('ย้ายตำแหน่งแล้ว ✓');
 }
 
 function render() { renderPool(); renderShow(); }

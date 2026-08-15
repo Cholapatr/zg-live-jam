@@ -331,7 +331,7 @@ function updateVoteButtons() {
   });
 }
 
-document.getElementById('btn-submit').addEventListener('click', async () => {
+async function submitNewSong(confirmReplay) {
   const title = document.getElementById('f-title').value.trim();
   if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
   const artist = document.getElementById('f-artist').value.trim();
@@ -354,10 +354,20 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
       voteType: selectedVoteType,
       voterName: requestedBy || getGuestName(),
       targetName,
-      eventId: getEventId()
+      eventId: getEventId(),
+      confirmReplay: !!confirmReplay
     })
   });
   const data = await res.json();
+  if (res.status === 409 && data.alreadyPlayed) {
+    const ex = data.existing;
+    const wantsEncore = confirm(
+      `เพลง "${ex.title}"${ex.artist ? ' — ' + ex.artist : ''} เล่นไปแล้วในงานนี้\n\n` +
+      `เจตนาจะขอใหม่อีกรอบ (encore) ใช่หรือไม่?`
+    );
+    if (wantsEncore) await submitNewSong(true);
+    return;
+  }
   if (res.status === 409 && data.existing) {
     const ex = data.existing;
     alert(
@@ -377,7 +387,9 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
   if (data.song && selectedVoteType) setMyVote(data.song.id, selectedVoteType);
   closeModal();
   showToast('เสนอเพลงแล้ว 🎉');
-});
+}
+
+document.getElementById('btn-submit').addEventListener('click', () => submitNewSong(false));
 
 // ---- socket live updates ----
 const socket = io();

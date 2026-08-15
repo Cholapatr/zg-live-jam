@@ -661,17 +661,27 @@ app.post('/api/favorites/import', requireLogin, (req, res) => {
 app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
   const fav = (req.user.favorites || []).find((f) => f.id === req.params.favId);
   if (!fav) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
-  const { clientId, voteType, targetName, voterName, eventId } = req.body || {};
+  const { clientId, voteType, targetName, voterName, eventId, confirmReplay } = req.body || {};
   if (!eventId || !findEvent(eventId)) {
     return res.status(400).json({ error: 'ไม่พบ Event นี้ กรุณาเลือก Event ก่อน' });
   }
   if (fav.chordId) {
     const dup = db.songs.find((s) => s.eventId === eventId && s.chordId && s.chordId === fav.chordId);
     if (dup) {
-      return res.status(409).json({
-        error: 'มีคนขอเพลงนี้ไปแล้ว',
-        existing: { id: dup.id, title: dup.title, artist: dup.artist || '', requestedBy: dup.requestedBy || '', chordId: dup.chordId || '' },
-      });
+      const dupPlayed = !!db.nextShow.find((i) => i.songId === dup.id && i.played);
+      if (dupPlayed && !confirmReplay) {
+        return res.status(409).json({
+          error: 'เพลงนี้เล่นไปแล้ว',
+          alreadyPlayed: true,
+          existing: { id: dup.id, title: dup.title, artist: dup.artist || '', requestedBy: dup.requestedBy || '', chordId: dup.chordId || '' },
+        });
+      }
+      if (!dupPlayed) {
+        return res.status(409).json({
+          error: 'มีคนขอเพลงนี้ไปแล้ว',
+          existing: { id: dup.id, title: dup.title, artist: dup.artist || '', requestedBy: dup.requestedBy || '', chordId: dup.chordId || '' },
+        });
+      }
     }
   }
   const requesterName = (voterName || req.user.name || '').trim();
@@ -809,7 +819,7 @@ app.post('/api/chord-lookup', async (req, res) => {
 // chordUrl = already server-verified link. chordId = unverified number the
 // guest typed in, kept so admin can verify/fill it in later.
 app.post('/api/songs', (req, res) => {
-  const { title, artist, requestedBy, clientId, voteType, targetName, voterName, chordUrl, chordId, eventId } = req.body || {};
+  const { title, artist, requestedBy, clientId, voteType, targetName, voterName, chordUrl, chordId, eventId, confirmReplay } = req.body || {};
   if (!eventId || !findEvent(eventId)) {
     return res.status(400).json({ error: 'ไม่พบ Event นี้ กรุณาเลือก Event ใหม่' });
   }
@@ -826,16 +836,37 @@ app.post('/api/songs', (req, res) => {
   if (newChordId) {
     const dup = db.songs.find((s) => s.eventId === eventId && s.chordId && s.chordId === newChordId);
     if (dup) {
-      return res.status(409).json({
-        error: 'มีคนขอเพลงนี้ไปแล้ว',
-        existing: {
-          id: dup.id,
-          title: dup.title,
-          artist: dup.artist || '',
-          requestedBy: dup.requestedBy || '',
-          chordId: dup.chordId || '',
-        },
-      });
+      const dupPlayed = !!db.nextShow.find((i) => i.songId === dup.id && i.played);
+      // If the matching song was already performed, don't hard-block like a
+      // normal duplicate — ask the guest to confirm they really want to
+      // request it again (encore) before creating a fresh entry.
+      if (dupPlayed && !confirmReplay) {
+        return res.status(409).json({
+          error: 'เพลงนี้เล่นไปแล้ว',
+          alreadyPlayed: true,
+          existing: {
+            id: dup.id,
+            title: dup.title,
+            artist: dup.artist || '',
+            requestedBy: dup.requestedBy || '',
+            chordId: dup.chordId || '',
+          },
+        });
+      }
+      if (!dupPlayed) {
+        return res.status(409).json({
+          error: 'มีคนขอเพลงนี้ไปแล้ว',
+          existing: {
+            id: dup.id,
+            title: dup.title,
+            artist: dup.artist || '',
+            requestedBy: dup.requestedBy || '',
+            chordId: dup.chordId || '',
+          },
+        });
+      }
+      // else: dupPlayed && confirmReplay — fall through and create a fresh
+      // request entry (encore), leaving the old played entry untouched.
     }
   }
 

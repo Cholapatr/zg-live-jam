@@ -347,10 +347,12 @@ function renderFavs() {
     <div class="card fav-card">
       <div class="fav-row">
         ${searching ? '' : `
+        <span class="order-num" style="flex-shrink:0;">${idx + 1}</span>
         <div class="fav-reorder">
           <button data-up="${f.id}" ${idx === 0 ? 'disabled' : ''} title="เลื่อนขึ้น">▲</button>
           <button data-down="${f.id}" ${idx === favorites.length - 1 ? 'disabled' : ''} title="เลื่อนลง">▼</button>
-        </div>`}
+        </div>
+        <button data-moveto="${f.id}" ${favorites.length < 3 ? 'disabled' : ''} title="ย้ายไปตำแหน่งที่ระบุ" style="flex-shrink:0;padding:5px 8px;font-size:0.8rem;">🔢</button>`}
         <div class="fav-info">
           <div class="fav-title">${escapeHtml(f.title)}</div>
           <div class="fav-sub">${escapeHtml(f.artist || 'ไม่ระบุศิลปิน')} · ${chordDisplay(f)}</div>
@@ -390,6 +392,9 @@ function renderFavs() {
   el.querySelectorAll('button[data-down]').forEach(btn => {
     btn.addEventListener('click', () => reorderFav(btn.dataset.down, 1));
   });
+  el.querySelectorAll('button[data-moveto]').forEach(btn => {
+    btn.addEventListener('click', () => moveFavTo(btn.dataset.moveto));
+  });
 }
 
 async function reorderFav(favId, dir) {
@@ -403,6 +408,30 @@ async function reorderFav(favId, dir) {
   });
   const data = await res.json();
   if (res.ok) { favorites = data.favorites; renderFavs(); }
+}
+
+// Jump a favourite directly to a chosen rank instead of pressing ▲/▼ one
+// step at a time — handy for long favourite lists.
+async function moveFavTo(favId) {
+  const order = favorites.map(f => f.id);
+  const idx = order.indexOf(favId);
+  if (idx === -1) return;
+  const input = prompt(`ย้ายไปตำแหน่งที่เท่าไหร่? (1-${order.length})`, String(idx + 1));
+  if (input === null) return;
+  const raw = parseInt(input, 10);
+  if (!Number.isInteger(raw)) { showToast('กรุณาใส่ตัวเลข'); return; }
+  // Out-of-range numbers clamp to the nearest valid end (e.g. asking for
+  // position 28 in a 20-song list just means "put it last").
+  const target = Math.min(Math.max(raw, 1), order.length);
+  const targetIdx = target - 1;
+  if (targetIdx === idx) return;
+  order.splice(idx, 1);
+  order.splice(targetIdx, 0, favId);
+  const res = await fetch('/api/favorites/reorder', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }),
+  });
+  const data = await res.json();
+  if (res.ok) { favorites = data.favorites; renderFavs(); showToast('ย้ายตำแหน่งแล้ว ✓'); }
 }
 
 document.getElementById('f-search').addEventListener('input', (e) => {
@@ -512,7 +541,7 @@ document.querySelectorAll('#req-vote-type-row button').forEach(btn => {
   });
 });
 
-document.getElementById('btn-req-submit').addEventListener('click', async () => {
+async function submitFavRequest(confirmReplay) {
   if (!reqTargetFavId) return;
   const eventId = document.getElementById('f-req-event').value;
   if (!eventId) { showToast('กรุณาเลือก Event ก่อน (หรือไปเพิ่ม Event ที่หน้า Event)'); return; }
@@ -524,6 +553,7 @@ document.getElementById('btn-req-submit').addEventListener('click', async () => 
     voteType: reqSelectedVoteType || undefined,
     voterName,
     targetName: document.getElementById('f-req-target').value.trim(),
+    confirmReplay: !!confirmReplay,
   };
   const res = await fetch(`/api/favorites/${reqTargetFavId}/request`, {
     method: 'POST',
@@ -531,6 +561,15 @@ document.getElementById('btn-req-submit').addEventListener('click', async () => 
     body: JSON.stringify(body),
   });
   const data = await res.json();
+  if (res.status === 409 && data.alreadyPlayed) {
+    const ex = data.existing;
+    const wantsEncore = confirm(
+      `เพลง "${ex.title}"${ex.artist ? ' — ' + ex.artist : ''} เล่นไปแล้วในงานนี้\n\n` +
+      `เจตนาจะขอใหม่อีกรอบ (encore) ใช่หรือไม่?`
+    );
+    if (wantsEncore) await submitFavRequest(true);
+    return;
+  }
   if (res.status === 409) {
     showToast(`มีคนขอเพลงนี้ไปแล้ว (${data.existing.title})`);
     closeRequestModal();
@@ -540,7 +579,9 @@ document.getElementById('btn-req-submit').addEventListener('click', async () => 
   if (data.song && reqSelectedVoteType) setMyVote(data.song.id, reqSelectedVoteType);
   closeRequestModal();
   showToast('ส่งเข้า Request List แล้ว 🎶');
-});
+}
+
+document.getElementById('btn-req-submit').addEventListener('click', () => submitFavRequest(false));
 
 // ---- Backup (export) / Restore (import) ----
 // Backup doesn't download right away — it explains what the file is for
