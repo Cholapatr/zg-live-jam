@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: zg-live-jam
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ADMIN_PIN
+        value: "1999"

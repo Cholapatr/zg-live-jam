@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — เข้าสู่ระบบ</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<div class="login-box">
+  <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" style="height:24px; margin-bottom:14px;" />
+  <h2>เข้าสู่ระบบ</h2>
+  <div class="sub">เข้าสู่ระบบเพื่อใช้ ⭐ Favourite List — เลือกเพลงไว้ล่วงหน้าก่อนงาน แล้วขอเพลงได้เร็วๆ ในงาน<br>(ไม่เข้าสู่ระบบก็ยังเสนอเพลง/โหวตได้ตามปกติ)</div>
+
+  <div id="login-error" class="login-error" style="display:none;"></div>
+  <div id="provider-list"></div>
+  <div id="no-provider-note" class="login-none-note" style="display:none;">
+    ยังไม่มีช่องทางเข้าสู่ระบบเปิดใช้งานในขณะนี้<br>สามารถใช้งานแอปต่อได้โดยไม่ต้องเข้าสู่ระบบ
+  </div>
+
+  <a class="login-skip" id="skip-link" href="index.html">ข้ามไปเลย (ไม่เข้าสู่ระบบ)</a>
+</div>
+
+<script>
+function qs(name) {
+  return new URLSearchParams(location.search).get(name);
+}
+function escapeHtml(str) {
+  return String(str || '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+
+const PROVIDER_LABEL_ICON = {
+  microsoft: '🟦',
+  google: '🟢',
+  line: '💬',
+};
+
+async function init() {
+  const err = qs('error');
+  if (err) {
+    const box = document.getElementById('login-error');
+    box.style.display = '';
+    box.textContent = 'เข้าสู่ระบบไม่สำเร็จ: ' + err;
+  }
+
+  const from = qs('from');
+  if (from && from.startsWith('/')) {
+    document.getElementById('skip-link').href = from;
+  }
+
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.loggedIn) {
+      location.href = from && from.startsWith('/') ? from : '/favorites.html';
+      return;
+    }
+    const providers = data.providers || [];
+    const listEl = document.getElementById('provider-list');
+    if (!providers.length) {
+      document.getElementById('no-provider-note').style.display = '';
+    } else {
+      listEl.innerHTML = providers.map(p => {
+        const href = `/auth/${p.key}` + (from ? `?from=${encodeURIComponent(from)}` : '');
+        return `<a class="btn provider-btn provider-${p.key}" href="${href}">${PROVIDER_LABEL_ICON[p.key] || '🔐'} เข้าสู่ระบบด้วย ${escapeHtml(p.label)}</a>`;
+      }).join('');
+    }
+  } catch (e) {
+    document.getElementById('no-provider-note').style.display = '';
+  }
+}
+init();
+</script>
+</body>
+</html>

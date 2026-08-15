@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — เลือก Event</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🎫 Event List — เลือก Event ที่จะเข้าร่วม</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html">🎶 Request List</a>
+    <a href="nextshow.html">📋 Next Show List</a>
+    <a href="musician.html">🎸 Musician</a>
+    <a href="admin.html">🛠 Admin</a>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div id="event-list"><div class="empty">กำลังโหลด...</div></div>
+</div>
+
+<button class="fab primary" id="btn-add">＋ เพิ่ม Event</button>
+
+<!-- PIN prompt — shown before add/edit if not already unlocked this session -->
+<div class="modal-bg" id="pin-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="pin-modal-close">✕</button>
+    <h2>🔑 ยืนยันตัวตน Admin</h2>
+    <div class="small-note" id="pin-modal-message" style="margin-bottom:10px;">แก้ไข(หรือเพิ่ม)ได้โดย Admin เท่านั้น โปรดระบุ Admin PIN</div>
+    <input type="text" inputmode="numeric" id="f-pin" placeholder="ใส่ PIN" />
+    <button class="primary" id="btn-pin-submit" style="width:100%;">ยืนยัน</button>
+  </div>
+</div>
+
+<!-- Add / edit event modal -->
+<div class="modal-bg" id="event-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="event-modal-close">✕</button>
+    <h2 id="event-modal-title">เพิ่ม Event</h2>
+
+    <label>ชื่อ Event *</label>
+    <input type="text" id="f-name" placeholder="เช่น ZyGen Outing 2026" />
+
+    <label>วันที่ (ไม่บังคับ)</label>
+    <input type="date" id="f-date" />
+
+    <div class="row-flex" style="gap:10px;">
+      <div class="grow">
+        <label>เวลาเริ่ม (ไม่บังคับ)</label>
+        <input type="time" id="f-timefrom" />
+      </div>
+      <div class="grow">
+        <label>เวลาสิ้นสุด (ไม่บังคับ)</label>
+        <input type="time" id="f-timeto" />
+      </div>
+    </div>
+
+    <label>สถานที่ (ไม่บังคับ)</label>
+    <input type="text" id="f-location" placeholder="เช่น ริมสระ ชั้น 2 รีสอร์ต ABC" />
+
+    <label>ลิงก์ Google Maps (ไม่บังคับ)</label>
+    <input type="text" id="f-maps" placeholder="วางลิงก์ Google Maps" />
+
+    <label>รายละเอียด Event</label>
+    <textarea id="f-description" rows="3" placeholder="รายละเอียดกิจกรรม"></textarea>
+
+    <label>ชื่อผู้ติดต่อ</label>
+    <input type="text" id="f-contactname" placeholder="ผู้ประสานงานงานนี้" />
+
+    <label>อีเมลผู้ติดต่อ (ไม่บังคับ)</label>
+    <input type="text" id="f-contactemail" placeholder="เช่น hr@zygen.com" />
+
+    <label>เบอร์มือถือผู้ติดต่อ (ไม่บังคับ)</label>
+    <input type="text" id="f-contactmobile" placeholder="เช่น 08x-xxx-xxxx" />
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-event-save" style="flex:1;">Save Event</button>
+    </div>
+    <div class="btn-row" id="delete-event-row" style="margin-top:10px; display:none;">
+      <button class="warn" id="btn-event-delete" style="flex:1;">🗑 Delete This Event</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let events = [];
+let pin = ''; // never cached here — events.html always re-asks for the PIN
+let pendingAction = null; // 'add' or { type: 'edit', id }
+let editingId = null;
+
+function fmtDateTime(e) {
+  const parts = [];
+  if (e.date) {
+    try {
+      parts.push(new Date(e.date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }));
+    } catch (err) { parts.push(e.date); }
+  }
+  if (e.timeFrom || e.timeTo) parts.push(`${e.timeFrom || '?'} - ${e.timeTo || '?'} น.`);
+  return parts.join(' · ');
+}
+
+function renderEvents() {
+  const el = document.getElementById('event-list');
+  if (!events.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มี Event — กด "＋ เพิ่ม Event" ด้านล่างเพื่อเริ่มต้น</div>';
+    return;
+  }
+  const currentId = getEventId();
+  el.innerHTML = events.map(e => {
+    const dt = fmtDateTime(e);
+    const isCurrent = e.id === currentId;
+    return `
+    <div class="card">
+      <div class="row-flex">
+        <h3 class="grow" style="margin-bottom:2px;">${escapeHtml(e.name)}</h3>
+        ${isCurrent ? '<span class="badge strong">✓ Joined</span>' : ''}
+      </div>
+      ${dt ? `<div class="small-note" style="margin-bottom:6px;">${escapeHtml(dt)}</div>` : ''}
+      ${e.location ? `<div class="artist" style="margin-bottom:2px;">📍 ${escapeHtml(e.location)}</div>` : ''}
+      ${e.mapsUrl ? `<a href="${escapeHtml(e.mapsUrl)}" target="_blank" rel="noopener" class="link-out">🗺 เปิด Google Maps</a>` : ''}
+      ${e.description ? `<div style="margin-top:8px; white-space:pre-wrap;">${escapeHtml(e.description)}</div>` : ''}
+      ${(e.contactName || e.contactEmail || e.contactMobile) ? `<div class="small-note" style="margin-top:8px;">
+        ติดต่อ: ${escapeHtml(e.contactName || '-')}
+        ${e.contactMobile ? ' · <a class="link-out" style="margin-top:0;" href="tel:' + escapeHtml(e.contactMobile) + '">' + escapeHtml(e.contactMobile) + '</a>' : ''}
+        ${e.contactEmail ? ' · <a class="link-out" style="margin-top:0;" href="mailto:' + escapeHtml(e.contactEmail) + '">' + escapeHtml(e.contactEmail) + '</a>' : ''}
+      </div>` : ''}
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="primary" data-join="${e.id}" style="flex:1;" ${isCurrent ? 'disabled' : ''}>${isCurrent ? '✓ Joined' : 'Join Event'}</button>
+        <button data-edit="${e.id}">✏️ แก้ไข</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', () => {
+    const e = events.find(x => x.id === b.dataset.join);
+    if (!e) return;
+    setEvent(e.id, e.name);
+    location.href = 'index.html';
+  }));
+  el.querySelectorAll('button[data-edit]').forEach(b => b.addEventListener('click', () => {
+    startAdminAction({ type: 'edit', id: b.dataset.edit });
+  }));
+}
+
+async function loadEvents() {
+  const res = await fetch('/api/events');
+  const data = await res.json();
+  events = data.events || [];
+  renderEvents();
+}
+
+// ---- PIN gate — always asks, every single time, for both add and edit.
+// (On success we also stash it in sessionStorage under the same key
+// admin.html uses, purely so someone who verifies here doesn't have to
+// retype it again if they then open admin.html in the same tab — but that
+// cached value is never used to skip the prompt here.) ----
+function startAdminAction(action) {
+  pendingAction = action;
+  document.getElementById('f-pin').value = '';
+  document.getElementById('pin-modal-message').textContent =
+    (action && action.type === 'delete')
+      ? 'ยืนยันการลบ Event นี้ถาวร โปรดระบุ Admin PIN อีกครั้ง'
+      : 'แก้ไข(หรือเพิ่ม)ได้โดย Admin เท่านั้น โปรดระบุ Admin PIN';
+  document.getElementById('pin-modal-bg').style.display = 'flex';
+}
+
+async function verifyPin(p) {
+  const res = await fetch('/api/admin/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p })
+  });
+  return res.ok;
+}
+
+document.getElementById('btn-pin-submit').addEventListener('click', async () => {
+  const p = document.getElementById('f-pin').value.trim();
+  const ok = await verifyPin(p);
+  if (!ok) { showToast('PIN ไม่ถูกต้อง'); return; }
+  pin = p;
+  sessionStorage.setItem('zg_admin_pin', p);
+  document.getElementById('pin-modal-bg').style.display = 'none';
+  runPendingAction();
+});
+document.getElementById('pin-modal-close').addEventListener('click', () => {
+  document.getElementById('pin-modal-bg').style.display = 'none';
+  pendingAction = null;
+});
+
+function runPendingAction() {
+  if (!pendingAction) return;
+  const action = pendingAction;
+  pendingAction = null;
+  if (action === 'add') openEventForm(null);
+  else if (action.type === 'edit') openEventForm(events.find(e => e.id === action.id));
+  else if (action.type === 'delete') performDelete(action.id);
+}
+
+// ---- Add / edit event form ----
+function openEventForm(existing) {
+  editingId = existing ? existing.id : null;
+  document.getElementById('event-modal-title').textContent = existing ? 'แก้ไข Event' : 'เพิ่ม Event';
+  document.getElementById('f-name').value = existing ? existing.name : '';
+  document.getElementById('f-date').value = existing ? existing.date : '';
+  document.getElementById('f-timefrom').value = existing ? existing.timeFrom : '';
+  document.getElementById('f-timeto').value = existing ? existing.timeTo : '';
+  document.getElementById('f-location').value = existing ? existing.location : '';
+  document.getElementById('f-maps').value = existing ? existing.mapsUrl : '';
+  document.getElementById('f-description').value = existing ? existing.description : '';
+  document.getElementById('f-contactname').value = existing ? existing.contactName : '';
+  document.getElementById('f-contactemail').value = existing ? existing.contactEmail : '';
+  document.getElementById('f-contactmobile').value = existing ? existing.contactMobile : '';
+  document.getElementById('delete-event-row').style.display = existing ? '' : 'none';
+  document.getElementById('event-modal-bg').style.display = 'flex';
+}
+
+// ---- Delete event (danger zone) ----
+document.getElementById('btn-event-delete').addEventListener('click', () => {
+  if (!editingId) return;
+  const ok = confirm(
+    'การกดปุ่มนี้ จะลบ Event นี้ถาวร ซึ่งข้อมูลการขอเพลงต่างๆ ใน Event นี้จะถูกลบหายไปด้วย คุณแน่ใจใช่หรือไม่'
+  );
+  if (!ok) return;
+  const idToDelete = editingId;
+  closeEventForm();
+  startAdminAction({ type: 'delete', id: idToDelete });
+});
+
+async function performDelete(id) {
+  const res = await fetch(`/api/admin/events/${id}/delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin })
+  });
+  if (res.status === 401) {
+    sessionStorage.removeItem('zg_admin_pin');
+    pin = '';
+    showToast('PIN ไม่ถูกต้องหรือหมดอายุ กรุณาใส่ใหม่');
+    startAdminAction({ type: 'delete', id });
+    return;
+  }
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error || 'ลบ Event ไม่สำเร็จ'); return; }
+  showToast('ลบ Event แล้ว');
+  if (getEventId() === id) { clearEvent(); renderEventHeader(); }
+  await loadEvents();
+}
+function closeEventForm() { document.getElementById('event-modal-bg').style.display = 'none'; }
+document.getElementById('event-modal-close').addEventListener('click', closeEventForm);
+document.getElementById('event-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'event-modal-bg') closeEventForm(); });
+
+document.getElementById('btn-add').addEventListener('click', () => startAdminAction('add'));
+
+document.getElementById('btn-event-save').addEventListener('click', async () => {
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { showToast('กรุณาใส่ชื่อ Event'); return; }
+  const body = {
+    pin,
+    name,
+    date: document.getElementById('f-date').value,
+    timeFrom: document.getElementById('f-timefrom').value,
+    timeTo: document.getElementById('f-timeto').value,
+    location: document.getElementById('f-location').value.trim(),
+    mapsUrl: document.getElementById('f-maps').value.trim(),
+    description: document.getElementById('f-description').value.trim(),
+    contactName: document.getElementById('f-contactname').value.trim(),
+    contactEmail: document.getElementById('f-contactemail').value.trim(),
+    contactMobile: document.getElementById('f-contactmobile').value.trim(),
+  };
+  const url = editingId ? `/api/admin/events/${editingId}/edit` : '/api/admin/events';
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) {
+    sessionStorage.removeItem('zg_admin_pin');
+    pin = '';
+    showToast('PIN ไม่ถูกต้องหรือหมดอายุ กรุณาใส่ใหม่');
+    closeEventForm();
+    startAdminAction(editingId ? { type: 'edit', id: editingId } : 'add');
+    return;
+  }
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
+  closeEventForm();
+  showToast(editingId ? 'แก้ไข Event แล้ว ✓' : 'เพิ่ม Event แล้ว ✓');
+  // If we're editing the event the person is currently joined into, keep
+  // their local "current event" name in sync too.
+  if (editingId && getEventId() === editingId) setEvent(editingId, data.event.name);
+  await loadEvents();
+});
+
+const socket = io();
+socket.on('state-changed', loadEvents);
+
+// So "Leave Event" (handled centrally in client-common.js) also refreshes
+// the ✓ Joined badges on this page instead of just clearing local storage.
+window.onLeaveEvent = renderEvents;
+
+renderEventHeader();
+renderAuthBar();
+loadEvents();
+</script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — สำหรับนักดนตรี</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🎸 Musician — ดู Request List แล้วกดตอบรับเพลงที่จะเล่น</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html">🎶 Request List</a>
+    <a href="nextshow.html">📋 Next Show List</a>
+    <a href="musician.html" class="active">🎸 Musician</a>
+    <a href="admin.html">🛠 Admin</a>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div id="name-card" class="card" style="display:none;">
+    <label>ชื่อของคุณ (ใช้จำการตอบรับของคุณ)</label>
+    <input type="text" id="f-my-name" placeholder="เช่น เอก" />
+    <label style="display:block; margin-top:6px;">บทบาท (เลือกได้หลายอย่าง)</label>
+    <div class="btn-row" id="role-checks"></div>
+    <button class="primary" id="btn-save-name" style="margin-top:10px;">บันทึกชื่อ</button>
+  </div>
+
+  <div id="name-display" class="card" style="display:none;">
+    คุณคือ <b id="my-name-label"></b> (<span id="my-role-label"></span>)
+    <button id="btn-change-name" style="float:right;">เปลี่ยนชื่อ</button>
+    <button id="btn-delete-name" class="warn" style="float:right; margin-right:6px;">🗑 ลบชื่อ</button>
+  </div>
+
+  <div class="section-title">Request List (เรียงตามคะแนนโหวตของผู้ฟัง)</div>
+  <div id="song-list"><div class="empty">กำลังโหลด...</div></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let state = { songs: [] };
+const LEVELS = [
+  { key: 'อยากเล่นมาก', emoji: '🔥' },
+  { key: 'เล่นได้', emoji: '✅' },
+  { key: 'ลองดู', emoji: '🤔' },
+  { key: 'เล่นไม่ได้', emoji: '🚫' },
+  { key: 'ไม่ระบุ', emoji: '❔' },
+];
+
+const ROLE_OPTIONS = ['🎸 กีตาร์', '🥁 กลอง', '🎤 ร้อง', '🎶 ช่วยร้อง', '🎹 คีย์บอร์ด/เปียโน', '🎸 เบส', 'อื่นๆ'];
+let selectedRoles = [];
+
+function getMyName() { return localStorage.getItem('zg_musician_name') || ''; }
+function setMyName(n) { localStorage.setItem('zg_musician_name', n); }
+function getMyRoles() {
+  try { return JSON.parse(localStorage.getItem('zg_musician_roles') || '[]'); }
+  catch (e) { return []; }
+}
+function setMyRoles(arr) { localStorage.setItem('zg_musician_roles', JSON.stringify(arr)); }
+
+function renderRoleChecks() {
+  const el = document.getElementById('role-checks');
+  el.innerHTML = ROLE_OPTIONS.map(r => `<button type="button" data-role="${escapeHtml(r)}" class="${selectedRoles.includes(r) ? 'selected' : ''}">${escapeHtml(r)}</button>`).join('');
+  el.querySelectorAll('button[data-role]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = btn.dataset.role;
+      if (selectedRoles.includes(r)) selectedRoles = selectedRoles.filter(x => x !== r);
+      else selectedRoles.push(r);
+      renderRoleChecks();
+    });
+  });
+}
+
+function refreshNameUi() {
+  const name = getMyName();
+  document.getElementById('name-card').style.display = name ? 'none' : '';
+  document.getElementById('name-display').style.display = name ? '' : 'none';
+  document.getElementById('my-name-label').textContent = name;
+  const roles = getMyRoles();
+  document.getElementById('my-role-label').textContent = roles.length ? roles.join(', ') : 'ไม่ระบุบทบาท';
+}
+
+document.getElementById('btn-save-name').addEventListener('click', () => {
+  const v = document.getElementById('f-my-name').value.trim();
+  if (!v) { showToast('กรุณาใส่ชื่อ'); return; }
+  setMyName(v);
+  setMyRoles(selectedRoles);
+  refreshNameUi();
+  render();
+});
+document.getElementById('btn-change-name').addEventListener('click', () => {
+  document.getElementById('f-my-name').value = getMyName();
+  selectedRoles = getMyRoles();
+  renderRoleChecks();
+  localStorage.removeItem('zg_musician_name');
+  refreshNameUi();
+});
+document.getElementById('btn-delete-name').addEventListener('click', () => {
+  if (!confirm('ลบชื่อออกจากเครื่องนี้ใช่หรือไม่? (การตอบรับเพลงที่เคยกดไว้จะยังอยู่ในระบบเหมือนเดิม แค่เครื่องนี้จะไม่จำชื่อไว้อีกต่อไป)')) return;
+  localStorage.removeItem('zg_musician_name');
+  localStorage.removeItem('zg_musician_roles');
+  selectedRoles = [];
+  document.getElementById('f-my-name').value = '';
+  renderRoleChecks();
+  refreshNameUi();
+  render();
+  showToast('ลบชื่อแล้ว');
+});
+
+selectedRoles = getMyRoles();
+renderRoleChecks();
+
+function voterListHtml(voters) {
+  if (!voters) return '';
+  const lines = [];
+  if (voters.want.length) lines.push(`🙋 อยากฟัง: ${voters.want.map(escapeHtml).join(', ')}`);
+  if (voters.singMyself.length) lines.push(`🎤 อยากร้อง: ${voters.singMyself.map(escapeHtml).join(', ')}`);
+  if (voters.requestOther.length) lines.push(`👉 ขอให้คนอื่นร้อง: ${voters.requestOther.map(v => escapeHtml(v.name) + (v.target ? ` (อยากให้ ${escapeHtml(v.target)} ร้อง)` : '')).join(', ')}`);
+  return lines.join('<br>');
+}
+
+function render() {
+  const el = document.getElementById('song-list');
+  const myName = getMyName();
+  const sorted = [...state.songs].sort((a, b) => b.votes.total - a.votes.total || a.createdAt - b.createdAt);
+  if (!sorted.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มีเพลงในลิสต์</div>';
+    return;
+  }
+  el.innerHTML = sorted.map(s => {
+    const myResponse = myName ? s.musicianResponses[myName] : null;
+    const myLevel = myResponse ? myResponse.level : null;
+    const others = Object.entries(s.musicianResponses).filter(([n]) => n !== myName);
+    return `
+    <div class="card">
+      <h3>${escapeHtml(s.title)}</h3>
+      <div class="artist">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}${s.chordUrl ? ' · <a href="' + s.chordUrl + '" target="_blank" rel="noopener" class="link-out" style="margin-top:0;">🎸 ดูคอร์ด ↗</a>' : ' · <span style="color:#ffd166;">⚠️ ยังไม่มีคอร์ด</span>'}</div>
+      <div class="badge-row">
+        <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
+        <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>
+        <span class="badge strong">👉 ขอให้ร้อง ${s.votes.requestOther}</span>
+      </div>
+      ${s.votes.total > 0 ? `<a href="#" data-names="${s.id}" class="link-out">👥 ดูว่าใครโหวตอะไร</a>
+      <div id="names-${s.id}" style="display:none;" class="small-note">${voterListHtml(s.voters)}</div>` : ''}
+      ${others.length ? `<div class="badge-row" style="margin-top:8px;">${others.map(([n, data]) => `<span class="badge">${escapeHtml(n)}${data.role ? ' (' + escapeHtml(data.role) + ')' : ''}: ${escapeHtml(data.level)}</span>`).join('')}</div>` : ''}
+      <div class="btn-row" style="margin-top:8px;">
+        ${LEVELS.map(l => `<button data-song="${s.id}" data-level="${l.key}" class="${myLevel === l.key ? 'selected' : ''}">${l.emoji} ${l.key}</button>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('button[data-level]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = getMyName();
+      if (!name) { showToast('กรุณาใส่ชื่อก่อน'); return; }
+      await fetch(`/api/songs/${btn.dataset.song}/musician-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ musicianName: name, level: btn.dataset.level, role: getMyRoles().join(', ') })
+      });
+      showToast('บันทึกการตอบรับแล้ว ✓');
+    });
+  });
+  el.querySelectorAll('a[data-names]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const box = document.getElementById('names-' + a.dataset.names);
+      box.style.display = box.style.display === 'none' ? '' : 'none';
+    });
+  });
+}
+
+async function loadState() {
+  const eventId = getEventId();
+  if (!eventId) return; // requireEvent() below is already redirecting to events.html
+  const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
+  if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
+  state = await res.json();
+  setEvent(state.event.id, state.event.name);
+  renderEventHeader();
+  render();
+  updateNavCounts(state);
+}
+
+const socket = io();
+socket.on('state-changed', loadState);
+
+refreshNameUi();
+renderEventHeader();
+renderAuthBar();
+if (requireEvent()) loadState();
+</script>
+</body>
+</html>

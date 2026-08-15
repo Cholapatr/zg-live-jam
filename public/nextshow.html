@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Next Show List</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">📋 Next Show List — คิวเพลงถัดไป พร้อมคอร์ดกดดูได้เลย</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html">🎶 Request List</a>
+    <a href="nextshow.html" class="active">📋 Next Show List</a>
+    <a href="musician.html">🎸 Musician</a>
+    <a href="admin.html">🛠 Admin</a>
+  </nav>
+</header>
+
+<div class="wrap" id="normal-wrap">
+  <div id="nextshow-list"><div class="empty">กำลังโหลด...</div></div>
+</div>
+
+<!-- Split view — shown once a chord is opened "ในนี้": left 80% chord
+     viewer, right 20% compact upcoming-songs list. -->
+<div id="split-layout" class="split-layout" style="display:none;">
+  <div class="split-left">
+    <div class="chord-panel-inner">
+      <div class="chord-panel-head">
+        <div class="grow">
+          <strong id="chord-panel-title"></strong>
+          <a id="chord-panel-openlink" class="link-out" href="#" target="_blank" rel="noopener" style="margin-top:2px;">เปิดในแท็บใหม่ ↗</a>
+        </div>
+        <div class="zoom-row" style="margin-top:0;">
+          <button id="chord-zoom-out">－</button>
+          <input type="number" id="chord-zoom-input" class="zoom-input" value="100" min="30" max="300" step="10" inputmode="numeric" />
+          <span class="zoom-label">%</span>
+          <button id="chord-zoom-in">＋</button>
+        </div>
+        <button id="chord-panel-close" title="ปิด กลับไปหน้ารายการ">✕ ปิด</button>
+      </div>
+      <div class="chord-frame-wrap" id="chord-frame-wrap">
+        <iframe id="chord-panel-frame" src="" loading="lazy"></iframe>
+      </div>
+      <div class="small-note" id="chord-panel-note"></div>
+    </div>
+  </div>
+  <div class="split-right">
+    <div class="split-right-head">
+      <span class="section-title" style="margin:0;">🎵 คิวถัดไป</span>
+      <button id="split-refresh-btn" title="รีเฟรชรายชื่อ (ไม่กระทบคอร์ดฝั่งซ้าย)">🔄</button>
+    </div>
+    <div id="split-song-list"></div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let state = { songs: [], nextShow: [] };
+let currentChordSongId = null;
+let panelZoom = 1;
+
+function voterListHtml(voters) {
+  if (!voters) return '';
+  const lines = [];
+  if (voters.want.length) lines.push(`🙋 อยากฟัง: ${voters.want.map(escapeHtml).join(', ')}`);
+  if (voters.singMyself.length) lines.push(`🎤 อยากร้อง: ${voters.singMyself.map(escapeHtml).join(', ')}`);
+  if (voters.requestOther.length) lines.push(`👉 ขอให้คนอื่นร้อง: ${voters.requestOther.map(v => escapeHtml(v.name) + (v.target ? ` (อยากให้ ${escapeHtml(v.target)} ร้อง)` : '')).join(', ')}`);
+  return lines.join('<br>');
+}
+
+function chordUrlFor(s) {
+  const directUrl = s.chordUrl || (s.chordId ? `https://www.dochord.com/${s.chordId}/` : '');
+  return { url: directUrl || chordUrl(s.title, s.artist), direct: !!directUrl };
+}
+
+const ZOOM_MIN = 30;
+const ZOOM_MAX = 300;
+
+// The wrap box has a fixed CSS height. CSS `zoom` scales the iframe's own
+// box (not just its visuals like transform would), so we pre-divide the
+// iframe's declared width/height by the zoom factor — after zoom is
+// applied, its on-screen size always lands back on exactly the wrap's
+// fixed size, so the visible window never grows or shrinks.
+function applyPanelZoomSize() {
+  const wrap = document.getElementById('chord-frame-wrap');
+  const frame = document.getElementById('chord-panel-frame');
+  const rect = wrap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  frame.style.width = (rect.width / panelZoom) + 'px';
+  frame.style.height = (rect.height / panelZoom) + 'px';
+  frame.style.zoom = panelZoom;
+}
+
+function setPanelZoom(value) {
+  panelZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value))) / 100;
+  document.getElementById('chord-zoom-input').value = Math.round(panelZoom * 100);
+  applyPanelZoomSize();
+}
+
+function enterSplitMode() {
+  document.getElementById('normal-wrap').style.display = 'none';
+  document.getElementById('split-layout').style.display = '';
+}
+
+function exitSplitMode() {
+  document.getElementById('split-layout').style.display = 'none';
+  document.getElementById('normal-wrap').style.display = '';
+}
+
+// Switches (or opens) the chord shown "ในนี้". Reused both from the normal
+// full list and from clicking a song in the split view's right-hand queue,
+// so musicians can hop between upcoming songs without leaving split mode.
+function openChordPanel(songId) {
+  const item = state.nextShow.find(i => i.song.id === songId);
+  if (!item) return;
+  const wasAlreadyOpen = !!currentChordSongId;
+  const s = item.song;
+  const { url, direct } = chordUrlFor(s);
+  currentChordSongId = songId;
+  enterSplitMode();
+  document.getElementById('chord-panel-title').textContent = s.title + (s.artist ? ' — ' + s.artist : '');
+  document.getElementById('chord-panel-openlink').href = url;
+  document.getElementById('chord-panel-note').textContent = direct
+    ? 'ลิงก์เพลงนี้ใส่ไว้ตอนขอเพลง — ตรงเพลงแน่นอน'
+    : '⚠️ เพลงนี้ไม่มีลิงก์คอร์ดจากตอนขอเพลง — นี่คือผลค้นหา อาจไม่ตรงเป๊ะ ถ้ากรอบว่างให้กดลิงก์ "เปิดในแท็บใหม่" แทน';
+  document.getElementById('chord-panel-frame').src = url;
+  setPanelZoom(100);
+  if (!wasAlreadyOpen) window.scrollTo({ top: 0, behavior: 'smooth' });
+  highlightActiveChordButton();
+  renderSplitRightList();
+}
+
+function closeChordPanel() {
+  exitSplitMode();
+  document.getElementById('chord-panel-frame').src = '';
+  currentChordSongId = null;
+  highlightActiveChordButton();
+}
+
+function highlightActiveChordButton() {
+  document.querySelectorAll('button[data-chord]').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.chord === currentChordSongId);
+  });
+}
+
+function openChordNewTab(songId) {
+  const item = state.nextShow.find(i => i.song.id === songId);
+  if (!item) return;
+  const { url } = chordUrlFor(item.song);
+  window.open(url, '_blank', 'noopener');
+}
+
+// Compact right-hand queue for split mode: order + title + artist only.
+// This never touches the iframe, so refreshing it (auto or manual) can
+// never interrupt the chord a musician is currently reading.
+function renderSplitRightList() {
+  const el = document.getElementById('split-song-list');
+  const list = state.nextShow;
+  if (!list.length) {
+    el.innerHTML = '<div class="empty" style="padding:16px 4px;">ไม่มีคิวเพลง</div>';
+    return;
+  }
+  el.innerHTML = list.map((item, idx) => {
+    const s = item.song;
+    return `
+    <div class="split-song-item ${s.id === currentChordSongId ? 'active' : ''}" data-split-song="${s.id}">
+      <span class="order-num">${idx + 1}</span>
+      <div class="info">
+        <div class="t">${escapeHtml(s.title)}${item.played ? ' ✅' : ''}</div>
+        <div class="a">${escapeHtml(s.artist || '')}</div>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-split-song]').forEach(row => {
+    row.addEventListener('click', () => openChordPanel(row.dataset.splitSong));
+  });
+}
+
+document.getElementById('chord-panel-close').addEventListener('click', closeChordPanel);
+document.getElementById('chord-zoom-in').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) + 10));
+document.getElementById('chord-zoom-out').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) - 10));
+document.getElementById('split-refresh-btn').addEventListener('click', () => loadState());
+const zoomInputEl = document.getElementById('chord-zoom-input');
+zoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(zoomInputEl.value) || 100));
+zoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(zoomInputEl.value) || 100); zoomInputEl.blur(); } });
+window.addEventListener('resize', () => { if (currentChordSongId) applyPanelZoomSize(); });
+
+function render() {
+  const el = document.getElementById('nextshow-list');
+  const list = state.nextShow;
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">ทีมงานยังไม่ได้จัดคิวเพลงถัดไป</div>';
+    closeChordPanel();
+    return;
+  }
+  if (currentChordSongId && !list.some(i => i.song.id === currentChordSongId)) {
+    closeChordPanel();
+  }
+  el.innerHTML = list.map((item, idx) => {
+    const s = item.song;
+    const musicians = Object.entries(s.musicianResponses || {});
+    return `
+    <div class="card ${item.played ? 'played' : ''}">
+      <div class="row-flex">
+        <span class="order-num">${idx + 1}</span>
+        <div class="grow">
+          <h3 style="margin-bottom:0;">${escapeHtml(s.title)}${item.played ? ' ✅' : ''}</h3>
+          <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-chord="${s.id}" class="${currentChordSongId === s.id ? 'selected' : ''}">🎸 คอร์ดในนี้</button>
+        <button data-chord-newtab="${s.id}">↗ คอร์ดแยกแถบ</button>
+      </div>
+      <div class="badge-row" style="margin-top:8px;">
+        <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
+        <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>
+        <span class="badge strong">👉 ขอให้ร้อง ${s.votes.requestOther}</span>
+        <button data-toggle="${s.id}" data-open="false" style="margin-left:auto;">+ รายละเอียด</button>
+      </div>
+      <div id="detail-${s.id}" style="display:none;">
+        ${s.votes.total > 0 ? `<div class="small-note">${voterListHtml(s.voters)}</div>` : '<div class="small-note">ยังไม่มีใครโหวตเพลงนี้</div>'}
+        ${musicians.length ? `
+        <div class="section-title" style="margin:10px 4px 4px;">การตอบรับของนักดนตรี</div>
+        <div class="small-note">${musicians.map(([n, d]) => `${escapeHtml(n)}${d.role ? ' (' + escapeHtml(d.role) + ')' : ''}: ${escapeHtml(d.level)}`).join('<br>')}</div>
+        ` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('button[data-chord]').forEach(btn => {
+    btn.addEventListener('click', () => openChordPanel(btn.dataset.chord));
+  });
+  el.querySelectorAll('button[data-chord-newtab]').forEach(btn => {
+    btn.addEventListener('click', () => openChordNewTab(btn.dataset.chordNewtab));
+  });
+  el.querySelectorAll('button[data-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const box = document.getElementById('detail-' + btn.dataset.toggle);
+      const nowOpen = box.style.display === 'none';
+      box.style.display = nowOpen ? '' : 'none';
+      btn.textContent = nowOpen ? '− ยุบรายละเอียด' : '+ รายละเอียด';
+    });
+  });
+
+  // Keep the open panel's title/link/note in sync if the song's data changed
+  // (e.g. admin edited the chord link while the panel was open).
+  if (currentChordSongId) {
+    const openItem = list.find(i => i.song.id === currentChordSongId);
+    if (openItem) {
+      const s = openItem.song;
+      const { direct } = chordUrlFor(s);
+      document.getElementById('chord-panel-title').textContent = s.title + (s.artist ? ' — ' + s.artist : '');
+      document.getElementById('chord-panel-note').textContent = direct
+        ? 'ลิงก์เพลงนี้ใส่ไว้ตอนขอเพลง — ตรงเพลงแน่นอน'
+        : '⚠️ เพลงนี้ไม่มีลิงก์คอร์ดจากตอนขอเพลง — นี่คือผลค้นหา อาจไม่ตรงเป๊ะ ถ้ากรอบว่างให้กดลิงก์ "เปิดในแท็บใหม่" แทน';
+    }
+  }
+
+  // Auto-refresh the compact right-hand queue too — it's a separate DOM
+  // subtree from the iframe, so this never touches/reloads the chord that's
+  // currently open on the left.
+  renderSplitRightList();
+}
+
+async function loadState() {
+  const eventId = getEventId();
+  if (!eventId) return; // requireEvent() below is already redirecting to events.html
+  const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
+  if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
+  state = await res.json();
+  setEvent(state.event.id, state.event.name);
+  renderEventHeader();
+  render();
+  updateNavCounts(state);
+}
+
+const socket = io();
+socket.on('state-changed', loadState);
+
+renderEventHeader();
+renderAuthBar();
+if (requireEvent()) loadState();
+</script>
+</body>
+</html>

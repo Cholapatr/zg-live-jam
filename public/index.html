@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — ขอเพลง/โหวต</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🎶 Request List — เสนอเพลง โหวต แล้วรอฟังกันสด ๆ</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html" class="active">🎶 Request List</a>
+    <a href="nextshow.html">📋 Next Show List</a>
+    <a href="musician.html">🎸 Musician</a>
+    <a href="admin.html">🛠 Admin</a>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div class="section-title">เพลงที่มีคนเสนอแล้ว (เรียงตามคะแนนโหวต)</div>
+  <div id="song-list"><div class="empty">กำลังโหลด...</div></div>
+</div>
+
+<button class="fab primary" id="btn-add">＋ เสนอเพลงใหม่</button>
+
+<!-- Add / vote modal -->
+<div class="modal-bg" id="modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="modal-close">✕</button>
+    <h2 id="modal-title">เสนอเพลงใหม่</h2>
+
+    <div class="section-title" style="margin-top:0;">1. หาเพลงจาก dochord (แนะนำ ได้คอร์ดพร้อมเล่นทันที)</div>
+    <button id="btn-open-dochord" style="width:100%;" type="button">🔍 เปิด dochord.com ค้นหาเพลง (แท็บใหม่)</button>
+    <label style="display:block; margin-top:10px;">เจอแล้ว ใส่ "หมายเลขเพลง" หรือวางลิงก์ก็ได้ (ไม่บังคับ)</label>
+    <input type="text" id="f-chordlink" placeholder="เช่น 378192 หรือ https://www.dochord.com/378192/" />
+    <div class="small-note" style="margin-bottom:10px;">หมายเลขคือเลขท้าย URL ของหน้าเพลงบน dochord เช่น dochord.com/<b>378192</b>/ — ถ้าไม่มีคอร์ดหรือหาไม่เจอ เว้นว่างไว้ได้</div>
+
+    <div class="section-title">2. ชื่อเพลง</div>
+    <label>ชื่อเพลง *</label>
+    <input type="text" id="f-title" placeholder="เช่น กลัวว่าฉันจะไม่เสียใจ" />
+    <label>ศิลปิน</label>
+    <input type="text" id="f-artist" placeholder="เช่น Purpeech" />
+
+    <label style="display:block; margin-top:6px;">ชื่อคุณ (ไม่บังคับ)</label>
+    <input type="text" id="f-requester" placeholder="ใครเสนอ" />
+
+    <div class="section-title" style="margin-top:6px;">คุณอยากโหวตแบบไหน?</div>
+    <div class="btn-row" id="vote-type-row">
+      <button data-vote="want">🙋 อยากฟัง</button>
+      <button data-vote="singMyself">🎤 อยากร้อง</button>
+      <button data-vote="requestOther">👉 ขอให้คนอื่นร้อง</button>
+    </div>
+    <div id="target-name-wrap" style="display:none; margin-top:8px;">
+      <label>อยากขอให้ใครร้อง? (ไม่บังคับ)</label>
+      <input type="text" id="f-target" placeholder="ชื่อคนที่อยากให้ร้อง" />
+    </div>
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-submit" style="flex:1;">ส่ง</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit modal (fix a typo on your own request) -->
+<div class="modal-bg" id="edit-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="edit-modal-close">✕</button>
+    <h2>แก้ไขเพลงที่เสนอ</h2>
+    <div class="small-note" style="margin-bottom:10px;">(ถ้าคุณไม่ได้เป็นคนขอเพลงนี้ กรุณาอย่าแก้ไขข้อมูลของคนอื่น)</div>
+
+    <label>ชื่อเพลง *</label>
+    <input type="text" id="e-title" placeholder="เช่น กลัวว่าฉันจะไม่เสียใจ" />
+    <label>ศิลปิน</label>
+    <input type="text" id="e-artist" placeholder="เช่น Purpeech" />
+    <label>หมายเลข/ลิงก์คอร์ด dochord (ไม่บังคับ)</label>
+    <input type="text" id="e-chordlink" placeholder="เช่น 378192 หรือ https://www.dochord.com/378192/" />
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-edit-save" style="flex:1;">บันทึกการแก้ไข</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let state = { songs: [], nextShow: [] };
+let selectedVoteType = null;
+
+function renderSongs() {
+  const el = document.getElementById('song-list');
+  const myVotes = getMyVotes();
+  const sorted = [...state.songs].sort((a, b) => b.votes.total - a.votes.total || a.createdAt - b.createdAt);
+  if (!sorted.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มีใครเสนอเพลง — เป็นคนแรกเลย!</div>';
+    return;
+  }
+  el.innerHTML = sorted.map(s => {
+    const mine = myVotes[s.id];
+    const chordBadge = s.chordUrl
+      ? '<span class="badge" style="color:#06d6a0;border-color:#06d6a0;">🎸 มีคอร์ดแล้ว</span>'
+      : '<span class="badge" style="color:#ffd166;border-color:#ffd166;">⚠️ ยังไม่มีคอร์ด</span>';
+    return `
+    <div class="card">
+      <div class="row-flex">
+        <h3 class="grow" style="margin-bottom:0;">${escapeHtml(s.title)}</h3>
+        <button data-edit="${s.id}" title="แก้ไขเพลงนี้" style="padding:6px 10px;">✏️</button>
+        <button data-del="${s.id}" data-votes="${s.votes.want + s.votes.singMyself}" title="ลบเพลงนี้" style="padding:6px 10px;">🗑</button>
+      </div>
+      <div class="artist">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}${s.requestedBy ? ' · เสนอโดย ' + escapeHtml(s.requestedBy) : ''}</div>
+      <div class="badge-row">
+        <span class="badge strong">🙋 ${s.votes.want}</span>
+        <span class="badge strong">🎤 ${s.votes.singMyself}</span>
+        <span class="badge strong">👉 ${s.votes.requestOther}</span>
+        <span class="badge">รวม ${s.votes.total} โหวต</span>
+        ${s.musicianSummary['อยากเล่นมาก'] > 0 ? `<span class="badge" style="color:#06d6a0;border-color:#06d6a0;">🎸 นักดนตรีอยากเล่นมาก x${s.musicianSummary['อยากเล่นมาก']}</span>` : ''}
+        ${chordBadge}
+      </div>
+      ${s.votes.total > 0 ? `<a href="#" data-names="${s.id}" class="link-out">👥 ดูว่าใครโหวตอะไร</a>
+      <div id="names-${s.id}" style="display:none;" class="small-note">${voterListHtml(s.voters)}</div>` : ''}
+      ${Object.keys(s.musicianResponses).length ? `<a href="#" data-musicians="${s.id}" class="link-out">🎸 นักดนตรีว่าไง</a>
+      <div id="musicians-${s.id}" style="display:none;" class="small-note">${musicianListHtml(s.musicianResponses)}</div>` : ''}
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-song="${s.id}" data-vote="want" class="${mine === 'want' ? 'selected' : ''}">🙋 อยากฟัง</button>
+        <button data-song="${s.id}" data-vote="singMyself" class="${mine === 'singMyself' ? 'selected' : ''}">🎤 อยากร้อง</button>
+        <button data-song="${s.id}" data-vote="requestOther" class="${mine === 'requestOther' ? 'selected' : ''}">👉 ขอให้คนอื่นร้อง</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('button[data-vote]').forEach(btn => {
+    btn.addEventListener('click', () => quickVote(btn.dataset.song, btn.dataset.vote));
+  });
+  el.querySelectorAll('a[data-names]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const box = document.getElementById('names-' + a.dataset.names);
+      box.style.display = box.style.display === 'none' ? '' : 'none';
+    });
+  });
+  el.querySelectorAll('a[data-musicians]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const box = document.getElementById('musicians-' + a.dataset.musicians);
+      box.style.display = box.style.display === 'none' ? '' : 'none';
+    });
+  });
+  el.querySelectorAll('button[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => deleteSong(btn.dataset.del, Number(btn.dataset.votes)));
+  });
+  el.querySelectorAll('button[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => openEditModal(btn.dataset.edit));
+  });
+}
+
+async function deleteSong(songId, interested) {
+  if (interested > 5) {
+    alert('เพลงที่มีคนอยากฟังหรืออยากร้องเกิน 5 คนแล้ว ลบเองไม่ได้ ต้องแจ้งให้ admin เป็นคนลบ');
+    return;
+  }
+  const ok = confirm('คุณยืนยันที่จะลบเพลงนี้ออกจากรายการเสนอเพลงหรือไม่ (ถ้าคุณไม่ได้เป็นคนที่ขอเพลงนี้ ไม่ควรลบเพลงที่คนอื่นเป็นคนขอ)');
+  if (!ok) return;
+  const res = await fetch(`/api/songs/${songId}/self-delete`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || 'ลบไม่สำเร็จ');
+    return;
+  }
+  showToast('ลบเพลงแล้ว');
+}
+
+// ---- Edit modal (fix a typo on your own request) ----
+const editModalBg = document.getElementById('edit-modal-bg');
+let editingSongId = null;
+
+function openEditModal(songId) {
+  const s = state.songs.find(x => x.id === songId);
+  if (!s) return;
+  if (s.adminStatus === 'checked') {
+    alert('Admin แก้ไขแล้ว ตอนนี้ไม่สามารถแก้ไขได้ด้วยตนเองได้ ถ้าต้องการแก้ไข ให้แจ้ง Admin');
+    return;
+  }
+  editingSongId = songId;
+  document.getElementById('e-title').value = s.title || '';
+  document.getElementById('e-artist').value = s.artist || '';
+  document.getElementById('e-chordlink').value = s.chordUrl || s.chordId || '';
+  editModalBg.style.display = 'flex';
+}
+function closeEditModal() { editModalBg.style.display = 'none'; editingSongId = null; }
+
+document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
+editModalBg.addEventListener('click', (e) => { if (e.target === editModalBg) closeEditModal(); });
+
+document.getElementById('btn-edit-save').addEventListener('click', async () => {
+  if (!editingSongId) return;
+  const title = document.getElementById('e-title').value.trim();
+  if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
+  const artist = document.getElementById('e-artist').value.trim();
+  const chordInput = document.getElementById('e-chordlink').value.trim();
+  let chordUrlValue = '';
+  let chordIdValue = '';
+  if (chordInput) {
+    chordUrlValue = buildDochordUrl(chordInput) || '';
+    if (!chordUrlValue) { showToast('รูปแบบหมายเลข/ลิงก์ dochord ไม่ถูกต้อง ลองใหม่หรือเว้นว่างไว้'); return; }
+  }
+  const res = await fetch(`/api/songs/${editingSongId}/edit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, artist, chordUrl: chordUrlValue, chordId: chordIdValue })
+  });
+  const data = await res.json();
+  if (res.status === 403) {
+    alert(data.error || 'แก้ไขไม่ได้');
+    closeEditModal();
+    return;
+  }
+  if (res.status === 409 && data.existing) {
+    const ex = data.existing;
+    alert(
+      `มีคนขอเพลงนี้ไปแล้ว (รหัสคอร์ดตรงกัน)\n\n` +
+      `ชื่อเพลง: ${ex.title}\n` +
+      `ศิลปิน: ${ex.artist || 'ไม่ระบุ'}\n` +
+      `รหัสคอร์ด: ${ex.chordId}\n` +
+      `เสนอโดย: ${ex.requestedBy || 'ไม่ระบุชื่อ'}`
+    );
+    return;
+  }
+  if (!res.ok) {
+    showToast(data.error || 'แก้ไขไม่สำเร็จ');
+    return;
+  }
+  closeEditModal();
+  showToast('แก้ไขแล้ว ✓');
+});
+
+function voterListHtml(voters) {
+  if (!voters) return '';
+  const lines = [];
+  if (voters.want.length) lines.push(`🙋 อยากฟัง: ${voters.want.map(escapeHtml).join(', ')}`);
+  if (voters.singMyself.length) lines.push(`🎤 อยากร้อง: ${voters.singMyself.map(escapeHtml).join(', ')}`);
+  if (voters.requestOther.length) lines.push(`👉 ขอให้คนอื่นร้อง: ${voters.requestOther.map(v => escapeHtml(v.name) + (v.target ? ` (อยากให้ ${escapeHtml(v.target)} ร้อง)` : '')).join(', ')}`);
+  return lines.join('<br>');
+}
+
+function musicianListHtml(responses) {
+  return Object.entries(responses)
+    .map(([n, d]) => `${escapeHtml(n)}${d.role ? ' (' + escapeHtml(d.role) + ')' : ''}: ${escapeHtml(d.level)}`)
+    .join('<br>');
+}
+
+async function quickVote(songId, voteType) {
+  const myVotes = getMyVotes();
+  const current = myVotes[songId];
+  const nextType = current === voteType ? null : voteType; // click again to unvote
+  let targetName = '';
+  let voterName = '';
+  if (nextType) {
+    voterName = ensureGuestName();
+    if (nextType === 'requestOther') {
+      targetName = prompt('อยากขอให้ใครร้อง? (เว้นว่างได้)') || '';
+    }
+  }
+  await fetch(`/api/songs/${songId}/vote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: getClientId(), voteType: nextType, targetName, voterName })
+  });
+  setMyVote(songId, nextType);
+  showToast('บันทึกโหวตแล้ว ✓');
+}
+
+async function loadState() {
+  const eventId = getEventId();
+  if (!eventId) return; // requireEvent() below is already redirecting to events.html
+  const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
+  if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
+  state = await res.json();
+  setEvent(state.event.id, state.event.name);
+  renderEventHeader();
+  renderSongs();
+  updateNavCounts(state);
+}
+
+// ---- Modal (new song) ----
+const modalBg = document.getElementById('modal-bg');
+document.getElementById('btn-add').addEventListener('click', () => openModal());
+document.getElementById('modal-close').addEventListener('click', closeModal);
+modalBg.addEventListener('click', (e) => { if (e.target === modalBg) closeModal(); });
+
+function openModal() {
+  selectedVoteType = null;
+  document.getElementById('f-chordlink').value = '';
+  document.getElementById('f-title').value = '';
+  document.getElementById('f-artist').value = '';
+  document.getElementById('f-requester').value = getGuestName();
+  document.getElementById('f-target').value = '';
+  document.getElementById('target-name-wrap').style.display = 'none';
+  updateVoteButtons();
+  modalBg.style.display = 'flex';
+}
+function closeModal() { modalBg.style.display = 'none'; }
+
+document.getElementById('btn-open-dochord').addEventListener('click', () => {
+  window.open('https://www.dochord.com/', '_blank');
+});
+
+document.querySelectorAll('#vote-type-row button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    selectedVoteType = selectedVoteType === btn.dataset.vote ? null : btn.dataset.vote;
+    document.getElementById('target-name-wrap').style.display = selectedVoteType === 'requestOther' ? '' : 'none';
+    updateVoteButtons();
+  });
+});
+function updateVoteButtons() {
+  document.querySelectorAll('#vote-type-row button').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.vote === selectedVoteType);
+  });
+}
+
+document.getElementById('btn-submit').addEventListener('click', async () => {
+  const title = document.getElementById('f-title').value.trim();
+  if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
+  const artist = document.getElementById('f-artist').value.trim();
+  const chordInput = document.getElementById('f-chordlink').value.trim();
+  let chordUrlValue = '';
+  if (chordInput) {
+    chordUrlValue = buildDochordUrl(chordInput) || '';
+    if (!chordUrlValue) { showToast('รูปแบบหมายเลข/ลิงก์ dochord ไม่ถูกต้อง ลองใหม่หรือเว้นว่างไว้'); return; }
+  }
+  const requestedBy = document.getElementById('f-requester').value.trim();
+  if (requestedBy) setGuestName(requestedBy);
+  const targetName = document.getElementById('f-target').value.trim();
+  const res = await fetch('/api/songs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title, artist, requestedBy,
+      chordUrl: chordUrlValue,
+      clientId: getClientId(),
+      voteType: selectedVoteType,
+      voterName: requestedBy || getGuestName(),
+      targetName,
+      eventId: getEventId()
+    })
+  });
+  const data = await res.json();
+  if (res.status === 409 && data.existing) {
+    const ex = data.existing;
+    alert(
+      `มีคนขอเพลงนี้ไปแล้ว (รหัสคอร์ดตรงกัน)\n\n` +
+      `ชื่อเพลง: ${ex.title}\n` +
+      `ศิลปิน: ${ex.artist || 'ไม่ระบุ'}\n` +
+      `รหัสคอร์ด: ${ex.chordId}\n` +
+      `เสนอโดย: ${ex.requestedBy || 'ไม่ระบุชื่อ'}\n\n` +
+      `ลองโหวตเพลงที่มีอยู่แล้วแทนได้เลย`
+    );
+    return;
+  }
+  if (!res.ok) {
+    showToast(data.error || 'เสนอเพลงไม่สำเร็จ');
+    return;
+  }
+  if (data.song && selectedVoteType) setMyVote(data.song.id, selectedVoteType);
+  closeModal();
+  showToast('เสนอเพลงแล้ว 🎉');
+});
+
+// ---- socket live updates ----
+const socket = io();
+socket.on('state-changed', loadState);
+
+renderEventHeader();
+renderAuthBar();
+if (requireEvent()) loadState();
+</script>
+</body>
+</html>

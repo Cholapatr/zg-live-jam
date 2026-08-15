@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — แอดมิน</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🛠 Admin — จัดคิว Next Show List และยืนยันคอร์ดเพลง</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html">🎶 Request List</a>
+    <a href="nextshow.html">📋 Next Show List</a>
+    <a href="musician.html">🎸 Musician</a>
+    <a href="admin.html" class="active">🛠 Admin</a>
+  </nav>
+</header>
+
+<div id="pin-screen" class="wrap">
+  <div class="pin-box">
+    <h2>🛠 เข้าสู่ระบบแอดมิน</h2>
+    <input type="text" inputmode="numeric" id="f-pin" placeholder="ใส่ PIN" />
+    <button class="primary" id="btn-login" style="width:100%;">เข้าสู่ระบบ</button>
+    <div class="small-note">PIN นี้ได้จากทีมงานผู้จัดงาน</div>
+  </div>
+</div>
+
+<div id="admin-screen" style="display:none;">
+  <div class="wrap">
+    <nav class="tabs" style="margin-bottom:14px;">
+      <a href="#" class="active" data-tab="pool">🎶 เพลงทั้งหมด</a>
+      <a href="#" data-tab="show">📋 Next Show List</a>
+      <a href="#" data-tab="tools">🧰 Special Tool</a>
+    </nav>
+    <div id="tab-pool">
+      <div id="pool-list"></div>
+    </div>
+    <div id="tab-show" style="display:none;">
+      <div id="show-list"></div>
+    </div>
+    <div id="tab-tools" style="display:none;">
+      <div class="card">
+        <h3 style="margin-top:0;">🧹 Clear all Next Show List</h3>
+        <div class="small-note" style="margin-bottom:10px;">ล้างคิว Next Show List ทั้งหมด — เพลงที่ขอไว้ใน Request List จะไม่หาย สามารถกลับไปเพิ่มเข้าคิวใหม่ได้ภายหลัง</div>
+        <button data-tool="clear-nextshow" class="warn" style="width:100%;">🧹 Clear all Next Show List</button>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">🧹 Clear all Request List</h3>
+        <div class="small-note" style="margin-bottom:10px;">ล้างรายการเพลงที่ขอไว้ทั้งหมด (รวมถึง Next Show List ด้วย เพราะเป็นข้อมูลชุดเดียวกัน — ถ้าอยากล้างแค่คิวอย่างเดียว ใช้ปุ่ม Clear all Next Show List แทน)</div>
+        <button data-tool="clear-requests" class="warn" style="width:100%;">🧹 Clear all Request List</button>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">♻️ Reset the stage</h3>
+        <div class="small-note" style="margin-bottom:10px;">ล้างทั้ง Request List และ Next Show List ทั้งหมดในครั้งเดียว เหมาะสำหรับเริ่มรอบใหม่ทั้งหมด</div>
+        <button data-tool="reset-stage" class="warn" style="width:100%;">♻️ Reset the stage (Clear all)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let state = { songs: [], nextShow: [] };
+let pin = sessionStorage.getItem('zg_admin_pin') || '';
+
+function switchTab(tab) {
+  document.querySelectorAll('nav.tabs a[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+  document.getElementById('tab-pool').style.display = tab === 'pool' ? '' : 'none';
+  document.getElementById('tab-show').style.display = tab === 'show' ? '' : 'none';
+  document.getElementById('tab-tools').style.display = tab === 'tools' ? '' : 'none';
+}
+document.querySelectorAll('nav.tabs a[data-tab]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); switchTab(a.dataset.tab); }));
+
+const TOOL_CONFIRM = {
+  'clear-nextshow': 'รายชื่อเพลงทั้งหมดใน Next Show List จะถูกลบทั้งหมด และย้อนกลับไม่ได้ ต้องเพิ่มเติมใหม่เอง - คุณยืนยันใช่หรือไม่',
+  'clear-requests': 'รายชื่อเพลงทั้งหมดใน Request List จะถูกลบทั้งหมด และย้อนกลับไม่ได้ ต้องเพิ่มเติมใหม่เอง - คุณยืนยันใช่หรือไม่',
+  'reset-stage': 'รายชื่อเพลงทั้งหมดใน Request List และ Next Show List จะถูกลบทั้งหมด และย้อนกลับไม่ได้ ต้องเพิ่มเติมใหม่เอง - คุณยืนยันใช่หรือไม่',
+};
+const TOOL_ENDPOINT = {
+  'clear-nextshow': '/api/admin/next-show/clear-all',
+  'clear-requests': '/api/admin/songs/clear-all',
+  'reset-stage': '/api/admin/reset-stage',
+};
+document.querySelectorAll('button[data-tool]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const key = btn.dataset.tool;
+    const eventId = getEventId();
+    if (!eventId) { showToast('กรุณาเลือก Event ก่อน'); return; }
+    if (!confirm(TOOL_CONFIRM[key])) return;
+    await adminPost(TOOL_ENDPOINT[key], { eventId });
+    showToast('ล้างข้อมูลเรียบร้อยแล้ว');
+  });
+});
+
+async function tryLogin(p) {
+  const res = await fetch('/api/admin/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p })
+  });
+  if (res.ok) {
+    pin = p;
+    sessionStorage.setItem('zg_admin_pin', p);
+    document.getElementById('pin-screen').style.display = 'none';
+    document.getElementById('admin-screen').style.display = '';
+    loadState();
+    return true;
+  }
+  return false;
+}
+
+document.getElementById('btn-login').addEventListener('click', async () => {
+  const p = document.getElementById('f-pin').value.trim();
+  const ok = await tryLogin(p);
+  if (!ok) showToast('PIN ไม่ถูกต้อง');
+});
+
+async function adminPost(url, body) {
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pin })
+  });
+  if (res.status === 401) {
+    sessionStorage.removeItem('zg_admin_pin');
+    document.getElementById('pin-screen').style.display = '';
+    document.getElementById('admin-screen').style.display = 'none';
+    showToast('กรุณาเข้าสู่ระบบใหม่');
+    throw new Error('unauthorized');
+  }
+  return res.json();
+}
+
+function inShowSet() {
+  return new Set(state.nextShow.map(i => i.songId));
+}
+function playedSet() {
+  return new Set(state.nextShow.filter(i => i.played).map(i => i.songId));
+}
+
+const STATUS_INFO = {
+  unchecked: { label: 'ยังไม่ตรวจ', color: '#b8adcf' },
+  checked: { label: 'ตรวจแล้ว', color: '#06d6a0' },
+  wrong: { label: 'ข้อมูลผิด', color: '#ff5c5c' },
+  inShow: { label: 'เพิ่มเข้า Next Show แล้ว', color: '#06d6a0' },
+  played: { label: 'เล่นไปแล้ว', color: '#8ecbe6' },
+};
+
+function computeStatus(s, already, played) {
+  if (played.has(s.id)) return 'played';
+  if (already.has(s.id)) return 'inShow';
+  return s.adminStatus || 'unchecked';
+}
+
+let expandedSongs = new Set();
+
+function renderPool() {
+  const el = document.getElementById('pool-list');
+  const already = inShowSet();
+  const played = playedSet();
+  const sorted = [...state.songs].sort((a, b) => {
+    const aPlayed = played.has(a.id), bPlayed = played.has(b.id);
+    if (aPlayed !== bPlayed) return aPlayed ? 1 : -1; // played sinks to bottom
+    return b.votes.total - a.votes.total || a.createdAt - b.createdAt;
+  });
+  if (!sorted.length) { el.innerHTML = '<div class="empty">ยังไม่มีเพลงถูกเสนอ</div>'; return; }
+  el.innerHTML = sorted.map(s => {
+    const musicians = Object.entries(s.musicianResponses);
+    const status = computeStatus(s, already, played);
+    const info = STATUS_INFO[status];
+    const isOpen = expandedSongs.has(s.id);
+    const isChecked = s.adminStatus === 'checked';
+    const inQueue = already.has(s.id);
+    const queueBtns = `
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-add="${s.id}" ${(!isChecked || inQueue) ? 'disabled' : ''} class="primary">${inQueue ? '✓ อยู่ในคิวแล้ว' : '+ เพิ่มเข้าคิว'}</button>
+        <button data-remove="${s.id}" ${(!isChecked || !inQueue) ? 'disabled' : ''} class="btn-queue-remove">− ถอดออกจากคิว</button>
+        <button data-del="${s.id}" class="warn">ลบเพลงนี้</button>
+      </div>
+      ${!isChecked ? '<div class="small-note">ต้องกด "ตรวจสอบแล้ว และบันทึก" ก่อน ปุ่ม เพิ่มเข้าคิว/ถอดออกจากคิว จึงจะกดได้ (ลบเพลงนี้กดได้เลยไม่ต้องรอ)</div>' : ''}`;
+    return `
+    <div class="card">
+      <div class="row-flex">
+        <div class="grow">
+          <div class="small-note" style="margin:0 0 2px;">รหัสคอร์ด: ${s.chordId ? escapeHtml(s.chordId) : '-'}</div>
+          <h3 style="margin:0;">${escapeHtml(s.title)}</h3>
+          <div class="artist" style="margin:0;">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}</div>
+          <div class="small-note" style="margin:0;">${s.requestedBy ? 'เสนอโดย ' + escapeHtml(s.requestedBy) : 'ไม่ระบุผู้เสนอ'}</div>
+        </div>
+        <button data-toggle="${s.id}">${isOpen ? '−' : '+'}</button>
+      </div>
+      <div class="badge-row" style="margin-top:8px;">
+        <span class="badge" style="color:${info.color};border-color:${info.color};">${info.label}</span>
+      </div>
+      ${queueBtns}
+      <div id="detail-${s.id}" style="display:${isOpen ? '' : 'none'}; margin-top:8px;">
+        <label>ชื่อเพลง</label>
+        <input type="text" id="titlein-${s.id}" value="${escapeHtml(s.title)}" style="font-weight:600;" />
+        <label>ศิลปิน</label>
+        <input type="text" id="artistin-${s.id}" value="${escapeHtml(s.artist || '')}" placeholder="ไม่ระบุศิลปิน" />
+        <label>คอร์ด</label>
+        <input type="text" id="chordin-${s.id}" placeholder="ลิงก์หรือหมายเลข dochord" value="${escapeHtml(s.chordUrl || '')}" />
+        <button data-save="${s.id}" class="btn-verify" style="width:100%;">💾 ตรวจสอบแล้ว และบันทึก</button>
+        <div id="chordmsg-${s.id}" class="small-note"></div>
+        <div class="badge-row" style="margin-top:8px;">
+          <span class="badge strong">🙋 ${s.votes.want}</span>
+          <span class="badge strong">🎤 ${s.votes.singMyself}</span>
+          <span class="badge strong">👉 ${s.votes.requestOther}</span>
+          <span class="badge">รวม ${s.votes.total}</span>
+          ${s.chordUrl ? `<a href="${s.chordUrl}" target="_blank" rel="noopener" class="link-out" style="margin-top:0;">🎸 เช็คคอร์ด ↗</a>` : ''}
+        </div>
+        ${s.votes.total > 0 ? `<a href="#" data-names="${s.id}" class="link-out">👥 ดูว่าใครโหวตอะไร</a>
+        <div id="names-${s.id}" style="display:none;" class="small-note">${voterListHtml(s.voters)}</div>` : ''}
+        <div class="badge-row" style="margin-top:8px;">
+          ${Object.entries(s.musicianSummary).filter(([,c]) => c > 0).map(([lvl, c]) => `<span class="badge">${lvl} x${c}</span>`).join('') || '<span class="badge">นักดนตรียังไม่ตอบรับ</span>'}
+        </div>
+        ${musicians.length ? `<a href="#" data-musicians="${s.id}" class="link-out">🎸 ดูว่านักดนตรีคนไหนตอบว่าอะไร</a>
+        <div id="musicians-${s.id}" style="display:none;" class="small-note">${musicians.map(([n, d]) => `${escapeHtml(n)}${d.role ? ' (' + escapeHtml(d.role) + ')' : ''}: ${escapeHtml(d.level)}`).join('<br>')}</div>` : ''}
+        <div class="btn-row" style="margin-top:8px;">
+          <button data-wrong="${s.id}" data-cur="${s.adminStatus}">${s.adminStatus === 'wrong' ? '↩ ยกเลิกข้อมูลผิด' : '🚫 ข้อมูลผิด'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  }).join('');
+
+  el.querySelectorAll('button[data-toggle]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.toggle;
+    if (expandedSongs.has(id)) expandedSongs.delete(id); else expandedSongs.add(id);
+    renderPool();
+  }));
+  el.querySelectorAll('button[data-add]').forEach(b => b.addEventListener('click', async () => {
+    await adminPost('/api/admin/next-show/add', { songId: b.dataset.add });
+    showToast('เพิ่มเข้าคิวแล้ว');
+  }));
+  el.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', async () => {
+    await adminPost('/api/admin/next-show/remove', { songId: b.dataset.remove });
+    showToast('ถอดออกจากคิวแล้ว');
+  }));
+  el.querySelectorAll('button[data-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('ลบเพลงนี้ออกจากระบบทั้งหมด?')) return;
+    await adminPost(`/api/admin/songs/${b.dataset.del}/delete`, {});
+    showToast('ลบเพลงแล้ว');
+  }));
+  el.querySelectorAll('button[data-wrong]').forEach(b => b.addEventListener('click', async () => {
+    const nextStatus = b.dataset.cur === 'wrong' ? 'unchecked' : 'wrong';
+    await adminPost(`/api/admin/songs/${b.dataset.wrong}/status`, { status: nextStatus });
+    showToast(nextStatus === 'wrong' ? 'ตั้งเป็นข้อมูลผิดแล้ว' : 'ยกเลิกสถานะข้อมูลผิดแล้ว');
+  }));
+  el.querySelectorAll('button[data-save]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.save;
+    const title = document.getElementById('titlein-' + id).value.trim();
+    const artist = document.getElementById('artistin-' + id).value.trim();
+    const chordInput = document.getElementById('chordin-' + id).value.trim();
+    const msg = document.getElementById('chordmsg-' + id);
+    if (!title) { showToast('ชื่อเพลงห้ามว่าง'); return; }
+    const body = { title, artist };
+    if (chordInput) {
+      const url = buildDochordUrl(chordInput);
+      if (!url) { msg.innerHTML = '<span style="color:#ff5c5c;">❌ ลิงก์/หมายเลข dochord รูปแบบไม่ถูกต้อง</span>'; return; }
+      body.chordUrl = url;
+    }
+    await adminPost(`/api/admin/songs/${id}/verify-chord`, body);
+    msg.textContent = '';
+    showToast('บันทึกแล้ว ✓');
+  }));
+  el.querySelectorAll('a[data-names]').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const box = document.getElementById('names-' + a.dataset.names);
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+  }));
+  el.querySelectorAll('a[data-musicians]').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const box = document.getElementById('musicians-' + a.dataset.musicians);
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+  }));
+}
+
+function voterListHtml(voters) {
+  if (!voters) return '';
+  const lines = [];
+  if (voters.want.length) lines.push(`🙋 อยากฟัง: ${voters.want.map(escapeHtml).join(', ')}`);
+  if (voters.singMyself.length) lines.push(`🎤 อยากร้อง: ${voters.singMyself.map(escapeHtml).join(', ')}`);
+  if (voters.requestOther.length) lines.push(`👉 ขอให้คนอื่นร้อง: ${voters.requestOther.map(v => escapeHtml(v.name) + (v.target ? ` (อยากให้ ${escapeHtml(v.target)} ร้อง)` : '')).join(', ')}`);
+  return lines.join('<br>');
+}
+
+function renderShow() {
+  const el = document.getElementById('show-list');
+  const list = state.nextShow;
+  if (!list.length) { el.innerHTML = '<div class="empty">ยังไม่มีเพลงในคิว — ไปเพิ่มจากแท็บ "เพลงทั้งหมด"</div>'; return; }
+  el.innerHTML = list.map((item, idx) => {
+    const s = item.song;
+    return `
+    <div class="card ${item.played ? 'played' : ''}">
+      <div class="row-flex">
+        <span class="order-num">${idx + 1}</span>
+        <div class="grow">
+          <h3 style="margin-bottom:0;">${escapeHtml(s.title)}</h3>
+          <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-up="${s.id}" ${idx === 0 ? 'disabled' : ''}>▲ ขึ้น</button>
+        <button data-down="${s.id}" ${idx === list.length - 1 ? 'disabled' : ''}>▼ ลง</button>
+        <button data-played="${s.id}" data-cur="${item.played}">${item.played ? '↩ ยังไม่เล่น' : '✅ เล่นแล้ว'}</button>
+        <button data-remove="${s.id}" class="warn">เอาออกจากคิว</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('button[data-up]').forEach(b => b.addEventListener('click', () => reorder(b.dataset.up, -1)));
+  el.querySelectorAll('button[data-down]').forEach(b => b.addEventListener('click', () => reorder(b.dataset.down, 1)));
+  el.querySelectorAll('button[data-played]').forEach(b => b.addEventListener('click', async () => {
+    await adminPost('/api/admin/next-show/played', { songId: b.dataset.played, played: b.dataset.cur !== 'true' });
+  }));
+  el.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', async () => {
+    await adminPost('/api/admin/next-show/remove', { songId: b.dataset.remove });
+    showToast('เอาออกจากคิวแล้ว');
+  }));
+}
+
+async function reorder(songId, dir) {
+  const order = state.nextShow.map(i => i.songId);
+  const idx = order.indexOf(songId);
+  const swapWith = idx + dir;
+  if (swapWith < 0 || swapWith >= order.length) return;
+  [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
+  await adminPost('/api/admin/next-show', { order, eventId: getEventId() });
+}
+
+function render() { renderPool(); renderShow(); }
+
+async function loadState() {
+  const eventId = getEventId();
+  if (!eventId) return; // requireEvent() below is already redirecting to events.html
+  const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
+  if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
+  state = await res.json();
+  render();
+  updateNavCounts(state);
+}
+
+const socket = io();
+socket.on('state-changed', loadState);
+
+renderEventHeader();
+renderAuthBar();
+if (requireEvent() && pin) { tryLogin(pin); }
+</script>
+</body>
+</html>

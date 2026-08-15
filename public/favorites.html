@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Favourite List</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap">
+      <h1 id="event-title">Select event to join..</h1>
+      <a href="#" id="leave-event-link" class="leave-link">Leave</a>
+    </div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">⭐ Favourite List — เก็บเพลงที่อยากเล่นไว้ล่วงหน้า</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+  <nav class="tabs" id="event-nav">
+    <a href="index.html">🎶 Request List</a>
+    <a href="nextshow.html">📋 Next Show List</a>
+    <a href="musician.html">🎸 Musician</a>
+    <a href="admin.html">🛠 Admin</a>
+  </nav>
+</header>
+
+<div class="wrap" id="normal-wrap">
+  <div id="login-prompt" class="login-none-note" style="display:none; text-align:center; margin-top:30px;">
+    ต้องเข้าสู่ระบบก่อนถึงจะใช้ Favourite List ได้<br><br>
+    <a class="btn primary" id="go-login" href="login.html?from=/favorites.html">เข้าสู่ระบบ</a>
+  </div>
+
+  <div id="fav-wrap" style="display:none;">
+    <div class="section-title" style="margin-top:0;">เพลงโปรดของคุณ</div>
+    <input type="text" id="f-search" placeholder="🔍 ค้นหาเพลงโปรด (ชื่อเพลง/ศิลปิน)" style="margin-bottom:10px;" />
+    <div id="fav-list"><div class="empty">กำลังโหลด...</div></div>
+    <div class="btn-row" style="margin-top:16px;">
+      <button id="btn-backup" style="flex:1;">💾 Backup</button>
+      <button id="btn-restore" style="flex:1;">📂 Restore</button>
+    </div>
+    <button id="btn-massupload" style="width:100%; margin-top:8px;">📤 Mass Upload (Excel)</button>
+    <div class="small-note" style="margin-top:6px;">ไฟล์ .xlsx 3 คอลัมน์เรียงตามลำดับ: ชื่อเพลง, ศิลปิน, ลิงก์ dochord (แถวแรกเป็นหัวตาราง ข้ามให้อัตโนมัติ)</div>
+    <input type="file" id="f-restore-file" accept="application/json,.json" style="display:none;" />
+    <input type="file" id="f-massupload-file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none;" />
+  </div>
+</div>
+
+<!-- Split view — shown once a favourite's "ซ้อม" (practice) mode is opened:
+     left 80% chord viewer, right 20% list of all favourites to hop between,
+     same layout as Next Show List's split view. -->
+<div id="split-layout" class="split-layout" style="display:none;">
+  <div class="split-left">
+    <div class="chord-panel-inner">
+      <div class="chord-panel-head">
+        <div class="grow">
+          <strong id="chord-panel-title"></strong>
+          <a id="chord-panel-openlink" class="link-out" href="#" target="_blank" rel="noopener" style="margin-top:2px;">เปิดในแท็บใหม่ ↗</a>
+        </div>
+        <div class="zoom-row" style="margin-top:0;">
+          <button id="chord-zoom-out">－</button>
+          <input type="number" id="chord-zoom-input" class="zoom-input" value="100" min="30" max="300" step="10" inputmode="numeric" />
+          <span class="zoom-label">%</span>
+          <button id="chord-zoom-in">＋</button>
+        </div>
+        <button id="chord-panel-close" title="ปิด กลับไปหน้ารายการ">✕ ปิด</button>
+      </div>
+      <div class="chord-frame-wrap" id="chord-frame-wrap">
+        <iframe id="chord-panel-frame" src="" loading="lazy"></iframe>
+      </div>
+      <div class="small-note" id="chord-panel-note"></div>
+    </div>
+  </div>
+  <div class="split-right">
+    <div class="split-right-head">
+      <span class="section-title" style="margin:0;">⭐ เพลงโปรดทั้งหมด</span>
+    </div>
+    <div id="split-song-list"></div>
+  </div>
+</div>
+
+<!-- Backup modal -->
+<div class="modal-bg" id="backup-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="backup-modal-close">✕</button>
+    <h2>💾 Backup เพลงโปรด</h2>
+    <div class="small-note" style="margin-bottom:14px;">
+      จะบันทึกเพลงโปรดทั้งหมดของคุณตอนนี้ออกเป็นไฟล์ เก็บไว้ในเครื่องของคุณ<br><br>
+      ถ้าภายหลังเพลงโปรดหายไป หรือเปลี่ยนไปใช้บัญชี login อื่น สามารถนำไฟล์นี้กลับมากด "Restore" เพื่อดึงรายการเพลงโปรดกลับเข้ามาได้
+    </div>
+    <div class="btn-row">
+      <button id="btn-backup-cancel" style="flex:1;">ยกเลิก</button>
+      <button class="primary" id="btn-backup-confirm" style="flex:1;">✅ ดาวน์โหลด Backup</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mass Upload explain modal -->
+<div class="modal-bg" id="massupload-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="massupload-modal-close">✕</button>
+    <h2>📤 Mass Upload เพลงโปรด</h2>
+    <div class="small-note" style="margin-bottom:14px;">
+      อัปโหลดไฟล์ Excel (.xlsx) ที่มี 3 คอลัมน์เรียงตามลำดับ:<br>
+      <b>คอลัมน์ A</b> ชื่อเพลง · <b>คอลัมน์ B</b> ศิลปิน · <b>คอลัมน์ C</b> ลิงก์ dochord<br><br>
+      แถวแรกเป็นหัวตาราง ระบบจะข้ามให้อัตโนมัติ — ยังไม่มีไฟล์ในมือ กด "ดาวน์โหลดตัวอย่างไฟล์" ด้านล่างเพื่อดูฟอร์แมตก่อนได้เลย
+    </div>
+    <div class="btn-row" style="flex-direction:column; gap:8px;">
+      <button id="btn-massupload-template" style="width:100%;">📥 ดาวน์โหลดตัวอย่างไฟล์ (Template)</button>
+      <button class="primary" id="btn-massupload-choose" style="width:100%;">📤 เลือกไฟล์ที่จะอัปโหลด</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import modal (shared by both Restore-from-backup and Mass Upload-from-Excel) -->
+<div class="modal-bg" id="restore-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="restore-modal-close">✕</button>
+    <h2>นำเข้าเพลงโปรดจากไฟล์</h2>
+    <div id="restore-summary" class="small-note" style="margin-bottom:10px;"></div>
+    <div class="btn-row" style="flex-direction:column; gap:8px;">
+      <button class="primary" id="btn-restore-merge" style="width:100%;">➕ ผสานเข้ากับรายการเดิม (Merge)</button>
+      <button class="warn" id="btn-restore-replace" style="width:100%;">♻️ แทนที่รายการเดิมทั้งหมด (Replace)</button>
+    </div>
+    <div class="small-note" style="margin-top:10px;">Merge: เพิ่มเฉพาะเพลงที่ยังไม่มีในรายการปัจจุบัน (ของเดิมไม่หาย) · Replace: ลบรายการปัจจุบันทั้งหมด แล้วใช้ข้อมูลจากไฟล์แทน (ย้อนกลับไม่ได้)</div>
+  </div>
+</div>
+
+<button class="fab primary" id="btn-add" style="display:none;">＋ เพิ่มเพลงโปรด</button>
+
+<!-- Add favourite modal -->
+<div class="modal-bg" id="modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="modal-close">✕</button>
+    <h2 id="fav-modal-title">เพิ่มเพลงโปรด</h2>
+
+    <div class="section-title" style="margin-top:0;">1. หาเพลงจาก dochord (แนะนำ ได้คอร์ดพร้อมเล่นทันที)</div>
+    <button id="btn-open-dochord" style="width:100%;" type="button">🔍 เปิด dochord.com ค้นหาเพลง (แท็บใหม่)</button>
+    <label style="display:block; margin-top:10px;">เจอแล้ว ใส่ "หมายเลขเพลง" หรือวางลิงก์ก็ได้ (ไม่บังคับ)</label>
+    <input type="text" id="f-chordlink" placeholder="เช่น 378192 หรือ https://www.dochord.com/378192/" />
+    <div class="small-note" style="margin-bottom:10px;">หมายเลขคือเลขท้าย URL ของหน้าเพลงบน dochord เช่น dochord.com/<b>378192</b>/ — ถ้าไม่มีคอร์ดหรือหาไม่เจอ เว้นว่างไว้ได้</div>
+
+    <div class="section-title">2. ชื่อเพลง</div>
+    <label>ชื่อเพลง *</label>
+    <input type="text" id="f-title" placeholder="เช่น กลัวว่าฉันจะไม่เสียใจ" />
+    <label>ศิลปิน</label>
+    <input type="text" id="f-artist" placeholder="เช่น Purpeech" />
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-submit" style="flex:1;">บันทึกเป็นเพลงโปรด</button>
+    </div>
+    <div id="fav-edit-only-note" class="small-note" style="display:none;">แก้ไขแล้วจะไม่กระทบเพลงที่ขอไปแล้วใน Request List (ถ้าเคยกด "ขอเพลงนี้" ไปก่อนหน้านี้)</div>
+  </div>
+</div>
+
+<!-- Request-to-Request-List modal (choose how you want to vote when converting a favourite) -->
+<div class="modal-bg" id="req-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="req-modal-close">✕</button>
+    <h2>ขอเพลงนี้เข้า Request List</h2>
+    <div id="req-song-label" class="small-note" style="font-size:0.9rem; color:var(--text); margin-bottom:10px;"></div>
+
+    <label>Event ที่จะขอเพลง *</label>
+    <select id="f-req-event"></select>
+
+    <label style="display:block; margin-top:6px;">ชื่อคุณ (ไม่บังคับ)</label>
+    <input type="text" id="f-req-requester" placeholder="ใครเสนอ" />
+
+    <div class="section-title" style="margin-top:6px;">คุณอยากโหวตแบบไหน?</div>
+    <div class="btn-row" id="req-vote-type-row">
+      <button data-vote="want">🙋 อยากฟัง</button>
+      <button data-vote="singMyself">🎤 อยากร้อง</button>
+      <button data-vote="requestOther">👉 ขอให้คนอื่นร้อง</button>
+    </div>
+    <div id="req-target-name-wrap" style="display:none; margin-top:8px;">
+      <label>อยากขอให้ใครร้อง? (ไม่บังคับ)</label>
+      <input type="text" id="f-req-target" placeholder="ชื่อคนที่อยากให้ร้อง" />
+    </div>
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-req-submit" style="flex:1;">ส่งคำขอ</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/client-common.js"></script>
+<script>
+let favorites = [];
+let pendingChordUrl = '';
+let pendingChordId = '';
+let reqSelectedVoteType = null;
+let reqTargetFavId = null;
+let events = [];
+let searchQuery = '';
+
+async function loadEventsForPicker() {
+  const res = await fetch('/api/events');
+  const data = await res.json();
+  events = data.events || [];
+}
+
+function chordDisplay(f) {
+  if (f.chordUrl) {
+    return `<a href="#" data-practice="${f.id}" class="link-out" style="margin-top:0;">🎯 ซ้อม</a> · ` +
+      `<a href="${f.chordUrl}" target="_blank" rel="noopener" class="link-out" style="margin-top:0;">↗ ดูคอร์ด</a>`;
+  }
+  if (f.chordId) return '<span class="small-note">หมายเลขคอร์ด: ' + escapeHtml(f.chordId) + ' (ยังไม่ยืนยัน)</span>';
+  return '<span style="color:#ffd166;">⚠️ ยังไม่มีคอร์ด</span>';
+}
+
+// ---- Practice mode ("ซ้อม") — embedded split view, same pattern as
+// Next Show List: left 80% shows the chord in an iframe (zoomable), right
+// 20% lists every favourite so you can hop between songs without leaving.
+let currentPracticeFavId = null;
+let panelZoom = 1;
+const ZOOM_MIN = 30;
+const ZOOM_MAX = 300;
+
+function chordUrlForFav(f) {
+  const directUrl = f.chordUrl || (f.chordId ? `https://www.dochord.com/${f.chordId}/` : '');
+  return { url: directUrl || chordUrl(f.title, f.artist), direct: !!directUrl };
+}
+
+function applyPanelZoomSize() {
+  const wrap = document.getElementById('chord-frame-wrap');
+  const frame = document.getElementById('chord-panel-frame');
+  const rect = wrap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  frame.style.width = (rect.width / panelZoom) + 'px';
+  frame.style.height = (rect.height / panelZoom) + 'px';
+  frame.style.zoom = panelZoom;
+}
+
+function setPanelZoom(value) {
+  panelZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value))) / 100;
+  document.getElementById('chord-zoom-input').value = Math.round(panelZoom * 100);
+  applyPanelZoomSize();
+}
+
+function enterSplitMode() {
+  document.getElementById('normal-wrap').style.display = 'none';
+  document.getElementById('split-layout').style.display = '';
+}
+function exitSplitMode() {
+  document.getElementById('split-layout').style.display = 'none';
+  document.getElementById('normal-wrap').style.display = '';
+}
+
+function openPracticePanel(favId) {
+  const f = favorites.find(x => x.id === favId);
+  if (!f) return;
+  const wasAlreadyOpen = !!currentPracticeFavId;
+  const { url, direct } = chordUrlForFav(f);
+  currentPracticeFavId = favId;
+  enterSplitMode();
+  document.getElementById('chord-panel-title').textContent = f.title + (f.artist ? ' — ' + f.artist : '');
+  document.getElementById('chord-panel-openlink').href = url;
+  document.getElementById('chord-panel-note').textContent = direct
+    ? 'ลิงก์เพลงนี้เป็นลิงก์ที่บันทึกไว้ — ตรงเพลงแน่นอน'
+    : '⚠️ เพลงนี้ยังไม่มีลิงก์คอร์ดที่ยืนยันแล้ว — นี่คือผลค้นหา อาจไม่ตรงเป๊ะ ถ้ากรอบว่างให้กดลิงก์ "เปิดในแท็บใหม่" แทน';
+  document.getElementById('chord-panel-frame').src = url;
+  setPanelZoom(100);
+  if (!wasAlreadyOpen) window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderSplitRightList();
+}
+
+function closePracticePanel() {
+  exitSplitMode();
+  document.getElementById('chord-panel-frame').src = '';
+  currentPracticeFavId = null;
+}
+
+function renderSplitRightList() {
+  const el = document.getElementById('split-song-list');
+  if (!favorites.length) {
+    el.innerHTML = '<div class="empty" style="padding:16px 4px;">ยังไม่มีเพลงโปรด</div>';
+    return;
+  }
+  el.innerHTML = favorites.map((f, idx) => `
+    <div class="split-song-item ${f.id === currentPracticeFavId ? 'active' : ''}" data-split-fav="${f.id}">
+      <span class="order-num">${idx + 1}</span>
+      <div class="info">
+        <div class="t">${escapeHtml(f.title)}</div>
+        <div class="a">${escapeHtml(f.artist || '')}</div>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('[data-split-fav]').forEach(row => {
+    row.addEventListener('click', () => openPracticePanel(row.dataset.splitFav));
+  });
+}
+
+document.getElementById('chord-panel-close').addEventListener('click', closePracticePanel);
+document.getElementById('chord-zoom-in').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) + 10));
+document.getElementById('chord-zoom-out').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) - 10));
+const favZoomInputEl = document.getElementById('chord-zoom-input');
+favZoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(favZoomInputEl.value) || 100));
+favZoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(favZoomInputEl.value) || 100); favZoomInputEl.blur(); } });
+window.addEventListener('resize', () => { if (currentPracticeFavId) applyPanelZoomSize(); });
+
+function matchesSearch(f) {
+  if (!searchQuery) return true;
+  const q = searchQuery.toLowerCase();
+  return (f.title || '').toLowerCase().includes(q) || (f.artist || '').toLowerCase().includes(q);
+}
+
+function renderFavs() {
+  // Keep the practice panel (if open) in sync with whatever just changed —
+  // close it if that favourite got removed, refresh its title/note if it
+  // was edited, and always refresh the right-hand list either way.
+  if (currentPracticeFavId && !favorites.some(f => f.id === currentPracticeFavId)) {
+    closePracticePanel();
+  } else if (currentPracticeFavId) {
+    const openFav = favorites.find(f => f.id === currentPracticeFavId);
+    if (openFav) {
+      const { direct } = chordUrlForFav(openFav);
+      document.getElementById('chord-panel-title').textContent = openFav.title + (openFav.artist ? ' — ' + openFav.artist : '');
+      document.getElementById('chord-panel-note').textContent = direct
+        ? 'ลิงก์เพลงนี้เป็นลิงก์ที่บันทึกไว้ — ตรงเพลงแน่นอน'
+        : '⚠️ เพลงนี้ยังไม่มีลิงก์คอร์ดที่ยืนยันแล้ว — นี่คือผลค้นหา อาจไม่ตรงเป๊ะ ถ้ากรอบว่างให้กดลิงก์ "เปิดในแท็บใหม่" แทน';
+    }
+  }
+  renderSplitRightList();
+
+  const el = document.getElementById('fav-list');
+  if (!favorites.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มีเพลงโปรด — กดปุ่ม ＋ เพิ่มเพลงโปรด ด้านล่างได้เลย</div>';
+    return;
+  }
+  const visible = favorites.filter(matchesSearch);
+  if (!visible.length) {
+    el.innerHTML = '<div class="empty">ไม่พบเพลงโปรดที่ตรงกับคำค้นหา</div>';
+    return;
+  }
+  // Reorder arrows move a song relative to its neighbours in the FULL
+  // (unfiltered) list, so they're only shown when search isn't narrowing
+  // the view — otherwise "up/down" would be ambiguous about what it means.
+  const searching = !!searchQuery;
+  el.innerHTML = visible.map(f => {
+    const idx = favorites.indexOf(f);
+    return `
+    <div class="card fav-card">
+      <div class="fav-row">
+        ${searching ? '' : `
+        <div class="fav-reorder">
+          <button data-up="${f.id}" ${idx === 0 ? 'disabled' : ''} title="เลื่อนขึ้น">▲</button>
+          <button data-down="${f.id}" ${idx === favorites.length - 1 ? 'disabled' : ''} title="เลื่อนลง">▼</button>
+        </div>`}
+        <div class="fav-info">
+          <div class="fav-title">${escapeHtml(f.title)}</div>
+          <div class="fav-sub">${escapeHtml(f.artist || 'ไม่ระบุศิลปิน')} · ${chordDisplay(f)}</div>
+        </div>
+        <div class="fav-actions">
+          <button class="btn-fav-request" data-request="${f.id}" title="ขอเพลงนี้">📣</button>
+          <button class="btn-fav-edit" data-edit="${f.id}" title="แก้ไข">✏️</button>
+          <button class="btn-fav-remove" data-remove="${f.id}" title="ลบ">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  el.querySelectorAll('a[data-practice]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      openPracticePanel(a.dataset.practice);
+    });
+  });
+  el.querySelectorAll('button[data-remove]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบเพลงนี้ออกจากเพลงโปรดใช่หรือไม่?')) return;
+      const res = await fetch(`/api/favorites/${btn.dataset.remove}/remove`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) { favorites = data.favorites; renderFavs(); showToast('ลบแล้ว'); }
+    });
+  });
+  el.querySelectorAll('button[data-request]').forEach(btn => {
+    btn.addEventListener('click', () => openRequestModal(btn.dataset.request));
+  });
+  el.querySelectorAll('button[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => openFavModal(favorites.find(f => f.id === btn.dataset.edit)));
+  });
+  el.querySelectorAll('button[data-up]').forEach(btn => {
+    btn.addEventListener('click', () => reorderFav(btn.dataset.up, -1));
+  });
+  el.querySelectorAll('button[data-down]').forEach(btn => {
+    btn.addEventListener('click', () => reorderFav(btn.dataset.down, 1));
+  });
+}
+
+async function reorderFav(favId, dir) {
+  const order = favorites.map(f => f.id);
+  const idx = order.indexOf(favId);
+  const swapWith = idx + dir;
+  if (swapWith < 0 || swapWith >= order.length) return;
+  [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
+  const res = await fetch('/api/favorites/reorder', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }),
+  });
+  const data = await res.json();
+  if (res.ok) { favorites = data.favorites; renderFavs(); }
+}
+
+document.getElementById('f-search').addEventListener('input', (e) => {
+  searchQuery = e.target.value.trim();
+  renderFavs();
+});
+
+async function loadFavorites() {
+  const res = await fetch('/api/me');
+  const data = await res.json();
+  if (!data.loggedIn) {
+    document.getElementById('login-prompt').style.display = '';
+    document.getElementById('fav-wrap').style.display = 'none';
+    document.getElementById('btn-add').style.display = 'none';
+    return;
+  }
+  document.getElementById('login-prompt').style.display = 'none';
+  document.getElementById('fav-wrap').style.display = '';
+  document.getElementById('btn-add').style.display = '';
+  favorites = data.favorites || [];
+  renderFavs();
+}
+
+// ---- Add / Edit favourite modal (shared) ----
+let editingFavId = null;
+
+function openFavModal(existing) {
+  editingFavId = existing ? existing.id : null;
+  document.getElementById('fav-modal-title').textContent = existing ? 'แก้ไขเพลงโปรด' : 'เพิ่มเพลงโปรด';
+  document.getElementById('fav-edit-only-note').style.display = existing ? '' : 'none';
+  document.getElementById('btn-submit').textContent = existing ? 'บันทึกการแก้ไข' : 'บันทึกเป็นเพลงโปรด';
+  document.getElementById('f-chordlink').value = existing ? (existing.chordUrl || existing.chordId || '') : '';
+  document.getElementById('f-title').value = existing ? (existing.title || '') : '';
+  document.getElementById('f-artist').value = existing ? (existing.artist || '') : '';
+  document.getElementById('modal-bg').style.display = 'flex';
+}
+function closeAddModal() { document.getElementById('modal-bg').style.display = 'none'; editingFavId = null; }
+
+document.getElementById('btn-add').addEventListener('click', () => openFavModal(null));
+document.getElementById('modal-close').addEventListener('click', closeAddModal);
+document.getElementById('modal-bg').addEventListener('click', (e) => { if (e.target.id === 'modal-bg') closeAddModal(); });
+
+document.getElementById('btn-open-dochord').addEventListener('click', () => {
+  window.open('https://www.dochord.com/', '_blank', 'noopener');
+});
+
+document.getElementById('btn-submit').addEventListener('click', async () => {
+  const title = document.getElementById('f-title').value.trim();
+  const artist = document.getElementById('f-artist').value.trim();
+  const chordInput = document.getElementById('f-chordlink').value.trim();
+  if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
+
+  let chordUrl = '';
+  let chordId = '';
+  if (chordInput) {
+    const built = buildDochordUrl(chordInput);
+    if (built) chordUrl = built;
+    else chordId = chordInput.replace(/\D/g, '');
+  }
+
+  const url = editingFavId ? `/api/favorites/${editingFavId}/edit` : '/api/favorites';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, artist, chordUrl, chordId }),
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
+  favorites = data.favorites;
+  renderFavs();
+  const wasEditing = !!editingFavId;
+  closeAddModal();
+  showToast(wasEditing ? 'บันทึกการแก้ไขแล้ว ✓' : 'บันทึกเป็นเพลงโปรดแล้ว ⭐');
+});
+
+// ---- Request-to-Request-List modal ----
+async function openRequestModal(favId) {
+  reqTargetFavId = favId;
+  reqSelectedVoteType = null;
+  const fav = favorites.find(f => f.id === favId);
+  document.getElementById('req-song-label').textContent = fav ? `${fav.title}${fav.artist ? ' — ' + fav.artist : ''}` : '';
+  document.getElementById('f-req-requester').value = getGuestName();
+  document.getElementById('f-req-target').value = '';
+  document.getElementById('req-target-name-wrap').style.display = 'none';
+  document.querySelectorAll('#req-vote-type-row button').forEach(b => b.classList.remove('selected'));
+
+  await loadEventsForPicker();
+  const sel = document.getElementById('f-req-event');
+  const currentEventId = getEventId();
+  if (!events.length) {
+    sel.innerHTML = '<option value="">— ยังไม่มี Event ให้เลือก —</option>';
+  } else {
+    sel.innerHTML = events.map(e => `<option value="${e.id}" ${e.id === currentEventId ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('');
+  }
+
+  document.getElementById('req-modal-bg').style.display = 'flex';
+}
+function closeRequestModal() { document.getElementById('req-modal-bg').style.display = 'none'; }
+document.getElementById('req-modal-close').addEventListener('click', closeRequestModal);
+document.getElementById('req-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'req-modal-bg') closeRequestModal(); });
+
+document.querySelectorAll('#req-vote-type-row button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    reqSelectedVoteType = btn.dataset.vote;
+    document.querySelectorAll('#req-vote-type-row button').forEach(b => b.classList.toggle('selected', b === btn));
+    document.getElementById('req-target-name-wrap').style.display = reqSelectedVoteType === 'requestOther' ? '' : 'none';
+  });
+});
+
+document.getElementById('btn-req-submit').addEventListener('click', async () => {
+  if (!reqTargetFavId) return;
+  const eventId = document.getElementById('f-req-event').value;
+  if (!eventId) { showToast('กรุณาเลือก Event ก่อน (หรือไปเพิ่ม Event ที่หน้า Event)'); return; }
+  const voterName = document.getElementById('f-req-requester').value.trim();
+  if (voterName) setGuestName(voterName);
+  const body = {
+    eventId,
+    clientId: getClientId(),
+    voteType: reqSelectedVoteType || undefined,
+    voterName,
+    targetName: document.getElementById('f-req-target').value.trim(),
+  };
+  const res = await fetch(`/api/favorites/${reqTargetFavId}/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (res.status === 409) {
+    showToast(`มีคนขอเพลงนี้ไปแล้ว (${data.existing.title})`);
+    closeRequestModal();
+    return;
+  }
+  if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
+  if (data.song && reqSelectedVoteType) setMyVote(data.song.id, reqSelectedVoteType);
+  closeRequestModal();
+  showToast('ส่งเข้า Request List แล้ว 🎶');
+});
+
+// ---- Backup (export) / Restore (import) ----
+// Backup doesn't download right away — it explains what the file is for
+// first (so it's clear it's for restoring later, e.g. after losing
+// favourites or switching login accounts), then downloads only once
+// confirmed.
+document.getElementById('btn-backup').addEventListener('click', () => {
+  if (!favorites.length) { showToast('ยังไม่มีเพลงโปรดให้ backup'); return; }
+  document.getElementById('backup-modal-bg').style.display = 'flex';
+});
+function closeBackupModal() { document.getElementById('backup-modal-bg').style.display = 'none'; }
+document.getElementById('backup-modal-close').addEventListener('click', closeBackupModal);
+document.getElementById('btn-backup-cancel').addEventListener('click', closeBackupModal);
+document.getElementById('backup-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'backup-modal-bg') closeBackupModal(); });
+
+document.getElementById('btn-backup-confirm').addEventListener('click', async () => {
+  const payload = {
+    app: 'ZG Live Jam',
+    type: 'favorites-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    favorites: favorites.map(f => ({ title: f.title, artist: f.artist || '', chordUrl: f.chordUrl || '', chordId: f.chordId || '' })),
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const filename = `zg-favourites-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+  // Chrome/Edge support letting the person pick exactly where to save via a
+  // native "Save As" dialog. Firefox/Safari don't support this API, so they
+  // fall back to a normal download into the browser's default folder.
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(json);
+      await writable.close();
+      closeBackupModal();
+      showToast('บันทึกไฟล์ backup แล้ว 💾');
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // person cancelled the save dialog — leave modal open to retry
+      // any other error: fall through to the plain-download fallback below
+    }
+  }
+
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  closeBackupModal();
+  showToast('ดาวน์โหลดไฟล์ backup แล้ว 💾');
+});
+
+document.getElementById('btn-restore').addEventListener('click', () => {
+  document.getElementById('f-restore-file').click();
+});
+
+let pendingImportFavs = null;
+
+function openImportModal(list, sourceLabel) {
+  pendingImportFavs = list;
+  document.getElementById('restore-summary').textContent = `พบเพลง ${list.length} เพลงใน${sourceLabel} — เลือกวิธีนำเข้าด้านล่าง`;
+  document.getElementById('restore-modal-bg').style.display = 'flex';
+}
+
+document.getElementById('f-restore-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = ''; // allow choosing the same file again later
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try { parsed = JSON.parse(reader.result); }
+    catch (err) { showToast('ไฟล์นี้ไม่ใช่ไฟล์ JSON ที่ถูกต้อง'); return; }
+    const list = Array.isArray(parsed) ? parsed : parsed.favorites;
+    if (!Array.isArray(list) || !list.length) { showToast('ไม่พบข้อมูลเพลงโปรดในไฟล์นี้'); return; }
+    openImportModal(list, 'ไฟล์นี้');
+  };
+  reader.readAsText(file);
+});
+
+// ---- Mass Upload (import from Excel: ชื่อเพลง / ศิลปิน / ลิงก์ dochord) ----
+// Clicking the button explains the expected file format first (3 columns,
+// header row skipped automatically) and offers a template download, rather
+// than jumping straight to a file picker with no context.
+document.getElementById('btn-massupload').addEventListener('click', () => {
+  document.getElementById('massupload-modal-bg').style.display = 'flex';
+});
+function closeMassUploadModal() { document.getElementById('massupload-modal-bg').style.display = 'none'; }
+document.getElementById('massupload-modal-close').addEventListener('click', closeMassUploadModal);
+document.getElementById('massupload-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'massupload-modal-bg') closeMassUploadModal(); });
+
+document.getElementById('btn-massupload-template').addEventListener('click', () => {
+  const wsData = [
+    ['ชื่อเพลง', 'ศิลปิน', 'ลิงก์ dochord'],
+    ['ปลายสายรุ้ง', 'PARADOX', 'https://www.dochord.com/72545/'],
+    ['ขาหมู', 'Tattoo Colour', 'https://www.dochord.com/88319/'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  XLSX.writeFile(wb, 'zg-favourites-template.xlsx');
+});
+
+document.getElementById('btn-massupload-choose').addEventListener('click', () => {
+  closeMassUploadModal();
+  document.getElementById('f-massupload-file').click();
+});
+
+document.getElementById('f-massupload-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = ''; // allow choosing the same file again later
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let rows;
+    try {
+      const data = new Uint8Array(reader.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      // header: 1 -> array-of-arrays by column position, so this doesn't
+      // depend on the header row's exact wording (just its position: A =
+      // ชื่อเพลง, B = ศิลปิน, C = ลิงก์ dochord).
+      rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+    } catch (err) {
+      showToast('เปิดไฟล์นี้ไม่ได้ ตรวจสอบว่าเป็นไฟล์ .xlsx/.xls ที่ถูกต้อง');
+      return;
+    }
+    const dataRows = rows.slice(1); // row 1 is the header, skip it
+    const list = dataRows
+      .map((row) => {
+        const title = (row[0] != null ? String(row[0]) : '').trim();
+        const artist = (row[1] != null ? String(row[1]) : '').trim();
+        const linkRaw = (row[2] != null ? String(row[2]) : '').trim();
+        if (!title) return null; // skip blank/malformed rows rather than failing the whole upload
+        const built = linkRaw ? buildDochordUrl(linkRaw) : null;
+        return {
+          title,
+          artist,
+          chordUrl: built || '',
+          chordId: !built && linkRaw ? linkRaw.replace(/\D/g, '') : '',
+        };
+      })
+      .filter(Boolean);
+    if (!list.length) { showToast('ไม่พบรายการเพลงที่ใช้ได้ในไฟล์นี้ (คอลัมน์ A ต้องมีชื่อเพลง)'); return; }
+    openImportModal(list, `ไฟล์ Excel นี้`);
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+function closeRestoreModal() { document.getElementById('restore-modal-bg').style.display = 'none'; pendingImportFavs = null; }
+document.getElementById('restore-modal-close').addEventListener('click', closeRestoreModal);
+document.getElementById('restore-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'restore-modal-bg') closeRestoreModal(); });
+
+async function submitImport(mode) {
+  if (!pendingImportFavs) return;
+  if (mode === 'replace' && !confirm('แทนที่เพลงโปรดปัจจุบันทั้งหมดด้วยข้อมูลจากไฟล์นี้ใช่หรือไม่? การกระทำนี้ย้อนกลับไม่ได้')) return;
+  const res = await fetch('/api/favorites/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ favorites: pendingImportFavs, mode }),
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error || 'นำเข้าไม่สำเร็จ'); return; }
+  favorites = data.favorites;
+  renderFavs();
+  closeRestoreModal();
+  showToast(`นำเข้าสำเร็จ (${data.imported} เพลง) ✓`);
+}
+document.getElementById('btn-restore-merge').addEventListener('click', () => submitImport('merge'));
+document.getElementById('btn-restore-replace').addEventListener('click', () => submitImport('replace'));
+
+// Favourites are per-user, not broadcast over Socket.IO — no live-update
+// listener needed here (Request List changes are visible on index.html).
+renderEventHeader();
+renderAuthBar();
+loadFavorites();
+</script>
+</body>
+</html>
