@@ -82,6 +82,44 @@ let state = { songs: [], nextShow: [] };
 let currentChordSongId = null;
 let panelZoom = 1;
 
+// "ขอให้คนอื่นร้อง" request boxes — same status colours/labels as admin.html.
+const REQUEST_STATUS_CLASS = {
+  'yes-solo': 'yes',
+  'yes-together': 'yes',
+  no: 'no',
+  pending: 'pending',
+};
+const REQUEST_STATUS_LABEL = {
+  'yes-solo': '✅ ร้องได้',
+  'yes-together': '🤝 ร้องด้วยกันนะ',
+  no: '🙏 ขอบคุณที่ชวน แต่ไม่พร้อม',
+  pending: 'ยังไม่ตอบ',
+};
+let songRequestStatus = {};
+async function loadSongRequestStatus() {
+  const eventId = getEventId();
+  if (!eventId) return;
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(eventId)}/song-request-status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    songRequestStatus = data.songs || {};
+  } catch (e) { /* non-critical */ }
+}
+
+function requestBoxesHtml(songId) {
+  const requests = songRequestStatus[songId] || [];
+  if (!requests.length) return '';
+  return `
+    <div class="admin-request-boxes">
+      ${requests.map(r => `
+      <div class="admin-request-box status-${REQUEST_STATUS_CLASS[r.status] || 'pending'}">
+        🎤 <b>${escapeHtml(r.fromName || 'ไม่ระบุชื่อ')}</b> ขอ <b>${escapeHtml(r.toName || 'ไม่ระบุชื่อ')}</b> ให้ร้อง<br>
+        ${REQUEST_STATUS_LABEL[r.status] || 'ยังไม่ตอบ'}
+      </div>`).join('')}
+    </div>`;
+}
+
 function voterListHtml(voters) {
   if (!voters) return '';
   const lines = [];
@@ -242,6 +280,7 @@ function render() {
       </div>
       <div id="detail-${s.id}" style="display:none;">
         ${s.votes.total > 0 ? `<div class="small-note">${voterListHtml(s.voters)}</div>` : '<div class="small-note">ยังไม่มีใครโหวตเพลงนี้</div>'}
+        ${requestBoxesHtml(s.id)}
         ${musicians.length ? `
         <div class="section-title" style="margin:10px 4px 4px;">การตอบรับของนักดนตรี</div>
         <div class="small-note">${musicians.map(([n, d]) => `${escapeHtml(n)}${d.role ? ' (' + escapeHtml(d.role) + ')' : ''}: ${escapeHtml(d.level)}`).join('<br>')}</div>
@@ -320,6 +359,7 @@ async function loadState() {
   state = await res.json();
   setEvent(state.event.id, state.event.name);
   renderEventHeader();
+  await loadSongRequestStatus();
   render();
   updateNavCounts(state);
 }
