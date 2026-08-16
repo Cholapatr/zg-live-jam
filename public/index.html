@@ -9,6 +9,7 @@
 </head>
 <body>
 <div class="toast" id="toast"></div>
+<datalist id="presence-names-list"></datalist>
 
 <header class="top">
   <div class="brand-row">
@@ -19,8 +20,14 @@
     <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
   </div>
   <div class="info-row">
-    <span class="page-label">🎶 Request List — เสนอเพลง โหวต แล้วรอฟังกันสด ๆ</span>
-    <div class="auth-bar" id="auth-bar"></div>
+    <div class="info-row-left">
+      <span class="page-label">🎶 Request List — เสนอเพลง โหวต แล้วรอฟังกันสด ๆ</span>
+      <div id="presence-widget" class="presence-widget"></div>
+    </div>
+    <div class="info-row-right">
+      <div class="auth-bar" id="auth-bar"></div>
+      <div id="inbox-widget" class="inbox-widget"></div>
+    </div>
   </div>
   <nav class="tabs" id="event-nav">
     <a href="index.html" class="active">🎶 Request List</a>
@@ -66,7 +73,7 @@
     </div>
     <div id="target-name-wrap" style="display:none; margin-top:8px;">
       <label>อยากขอให้ใครร้อง? (ไม่บังคับ)</label>
-      <input type="text" id="f-target" placeholder="ชื่อคนที่อยากให้ร้อง" />
+      <input type="text" id="f-target" list="presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
     </div>
 
     <div class="btn-row" style="margin-top:14px;">
@@ -91,6 +98,19 @@
 
     <div class="btn-row" style="margin-top:14px;">
       <button class="primary" id="btn-edit-save" style="flex:1;">บันทึกการแก้ไข</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="quicktarget-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="quicktarget-modal-close">✕</button>
+    <h2>อยากขอให้ใครร้อง?</h2>
+    <label>ชื่อ (ไม่บังคับ)</label>
+    <input type="text" id="f-quicktarget" list="presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
+    <div class="btn-row" style="margin-top:14px;">
+      <button id="btn-quicktarget-skip" style="flex:1;">ไม่ระบุ</button>
+      <button class="primary" id="btn-quicktarget-ok" style="flex:1;">ตกลง</button>
     </div>
   </div>
 </div>
@@ -205,6 +225,32 @@ function closeEditModal() { editModalBg.style.display = 'none'; editingSongId = 
 document.getElementById('edit-modal-close').addEventListener('click', closeEditModal);
 editModalBg.addEventListener('click', (e) => { if (e.target === editModalBg) closeEditModal(); });
 
+// ---- Modal (pick who to ask to sing, for "ขอให้คนอื่นร้อง") ----
+const quicktargetModalBg = document.getElementById('quicktarget-modal-bg');
+let quicktargetResolve = null;
+
+function pickTargetName() {
+  return new Promise((resolve) => {
+    quicktargetResolve = resolve;
+    document.getElementById('f-quicktarget').value = '';
+    quicktargetModalBg.style.display = '';
+    document.getElementById('f-quicktarget').focus();
+  });
+}
+function closeQuicktargetModal(result) {
+  quicktargetModalBg.style.display = 'none';
+  if (quicktargetResolve) { quicktargetResolve(result); quicktargetResolve = null; }
+}
+document.getElementById('quicktarget-modal-close').addEventListener('click', () => closeQuicktargetModal(null));
+quicktargetModalBg.addEventListener('click', (e) => { if (e.target === quicktargetModalBg) closeQuicktargetModal(null); });
+document.getElementById('btn-quicktarget-skip').addEventListener('click', () => closeQuicktargetModal(''));
+document.getElementById('btn-quicktarget-ok').addEventListener('click', () => {
+  closeQuicktargetModal(document.getElementById('f-quicktarget').value.trim());
+});
+document.getElementById('f-quicktarget').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); closeQuicktargetModal(document.getElementById('f-quicktarget').value.trim()); }
+});
+
 document.getElementById('btn-edit-save').addEventListener('click', async () => {
   if (!editingSongId) return;
   const title = document.getElementById('e-title').value.trim();
@@ -271,7 +317,8 @@ async function quickVote(songId, voteType) {
   if (nextType) {
     voterName = ensureGuestName();
     if (nextType === 'requestOther') {
-      targetName = prompt('อยากขอให้ใครร้อง? (เว้นว่างได้)') || '';
+      targetName = await pickTargetName();
+      if (targetName === null) return; // user cancelled the picker entirely
     }
   }
   await fetch(`/api/songs/${songId}/vote`, {
@@ -394,6 +441,8 @@ document.getElementById('btn-submit').addEventListener('click', () => submitNewS
 // ---- socket live updates ----
 const socket = io();
 socket.on('state-changed', loadState);
+initPresence(socket);
+initInbox(socket);
 
 renderEventHeader();
 renderAuthBar();

@@ -148,9 +148,10 @@ function renderEvents() {
     </div>`;
   }).join('');
 
-  el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', () => {
+  el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', async () => {
     const e = events.find(x => x.id === b.dataset.join);
     if (!e) return;
+    await confirmGuestNameForJoin();
     setEvent(e.id, e.name);
     location.href = 'index.html';
   }));

@@ -19,8 +19,14 @@
     <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
   </div>
   <div class="info-row">
-    <span class="page-label">📋 Next Show List — คิวเพลงถัดไป พร้อมคอร์ดกดดูได้เลย</span>
-    <div class="auth-bar" id="auth-bar"></div>
+    <div class="info-row-left">
+      <span class="page-label">📋 Next Show List — คิวเพลงถัดไป พร้อมคอร์ดกดดูได้เลย</span>
+      <div id="presence-widget" class="presence-widget"></div>
+    </div>
+    <div class="info-row-right">
+      <div class="auth-bar" id="auth-bar"></div>
+      <div id="inbox-widget" class="inbox-widget"></div>
+    </div>
   </div>
   <nav class="tabs" id="event-nav">
     <a href="index.html">🎶 Request List</a>
@@ -320,6 +326,8 @@ async function loadState() {
 
 const socket = io();
 socket.on('state-changed', loadState);
+initPresence(socket);
+initInbox(socket);
 
 renderEventHeader();
 renderAuthBar();

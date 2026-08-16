@@ -9,6 +9,7 @@
 </head>
 <body>
 <div class="toast" id="toast"></div>
+<datalist id="fav-presence-names-list"></datalist>
 
 <header class="top">
   <div class="brand-row">
@@ -179,7 +180,7 @@
     </div>
     <div id="req-target-name-wrap" style="display:none; margin-top:8px;">
       <label>อยากขอให้ใครร้อง? (ไม่บังคับ)</label>
-      <input type="text" id="f-req-target" placeholder="ชื่อคนที่อยากให้ร้อง" />
+      <input type="text" id="f-req-target" list="fav-presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
     </div>
 
     <div class="btn-row" style="margin-top:14px;">
@@ -526,12 +527,30 @@ async function openRequestModal(favId) {
   } else {
     sel.innerHTML = events.map(e => `<option value="${e.id}" ${e.id === currentEventId ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('');
   }
+  await refreshFavPresenceNames();
 
   document.getElementById('req-modal-bg').style.display = 'flex';
 }
 function closeRequestModal() { document.getElementById('req-modal-bg').style.display = 'none'; }
 document.getElementById('req-modal-close').addEventListener('click', closeRequestModal);
 document.getElementById('req-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'req-modal-bg') closeRequestModal(); });
+
+// Keep the "ขอให้ใครร้อง" datalist in sync with whichever event is
+// currently selected in the request modal — a favourite can be requested
+// into a different event than the one the guest is actually joined to.
+async function refreshFavPresenceNames() {
+  const eventId = document.getElementById('f-req-event').value;
+  if (!eventId) { populateNameDatalist('fav-presence-names-list', []); return; }
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(eventId)}/presence`);
+    if (!res.ok) { populateNameDatalist('fav-presence-names-list', []); return; }
+    const data = await res.json();
+    populateNameDatalist('fav-presence-names-list', data.names || []);
+  } catch (e) {
+    populateNameDatalist('fav-presence-names-list', []);
+  }
+}
+document.getElementById('f-req-event').addEventListener('change', refreshFavPresenceNames);
 
 document.querySelectorAll('#req-vote-type-row button').forEach(btn => {
   btn.addEventListener('click', () => {

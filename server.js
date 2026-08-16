@@ -59,6 +59,7 @@ if (!db.songs) db.songs = [];
 if (!db.nextShow) db.nextShow = [];
 if (!db.users) db.users = [];
 if (!db.events) db.events = [];
+if (!db.inbox) db.inbox = [];
 
 // Migration: songs created before multi-event support get grouped into one
 // auto-created "legacy" event, so no existing test data is silently lost or
@@ -704,6 +705,12 @@ app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
   db.songs.push(song);
   saveDb();
   broadcast();
+  if (clientId) {
+    maybeNotifyRequestOther({
+      eventId, songId: song.id, songTitle: song.title, voteType, targetName,
+      fromClientId: clientId, fromName: requesterName,
+    });
+  }
   res.json({ ok: true, song: publicSong(song) });
 });
 
@@ -890,6 +897,12 @@ app.post('/api/songs', (req, res) => {
   db.songs.push(song);
   saveDb();
   broadcast();
+  if (clientId) {
+    maybeNotifyRequestOther({
+      eventId, songId: song.id, songTitle: song.title, voteType, targetName,
+      fromClientId: clientId, fromName: (voterName || requestedBy || '').trim(),
+    });
+  }
   res.json({ ok: true, song: publicSong(song) });
 });
 
@@ -905,6 +918,10 @@ app.post('/api/songs/:id/vote', (req, res) => {
   }
   saveDb();
   broadcast();
+  maybeNotifyRequestOther({
+    eventId: song.eventId, songId: song.id, songTitle: song.title, voteType, targetName,
+    fromClientId: clientId, fromName: (voterName || '').trim(),
+  });
   res.json({ ok: true, song: publicSong(song) });
 });
 
@@ -1085,6 +1102,7 @@ app.post('/api/admin/songs/clear-all', checkPin, (req, res) => {
   const removeIds = new Set(db.songs.filter((s) => s.eventId === eventId).map((s) => s.id));
   db.songs = db.songs.filter((s) => s.eventId !== eventId);
   db.nextShow = db.nextShow.filter((item) => !removeIds.has(item.songId));
+  clearInboxForEvent(eventId);
   saveDb();
   broadcast();
   res.json({ ok: true });
@@ -1097,6 +1115,7 @@ app.post('/api/admin/reset-stage', checkPin, (req, res) => {
   const removeIds = new Set(db.songs.filter((s) => s.eventId === eventId).map((s) => s.id));
   db.songs = db.songs.filter((s) => s.eventId !== eventId);
   db.nextShow = db.nextShow.filter((item) => !removeIds.has(item.songId));
+  clearInboxForEvent(eventId);
   saveDb();
   broadcast();
   res.json({ ok: true });
@@ -1166,9 +1185,299 @@ app.post('/api/admin/songs/:id/delete', checkPin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Presence (who's live-connected to each event right now) ----------
+// Purely in-memory, never persisted — it's inherently a snapshot of "who's
+// connected this instant", reconstructed for free every time someone
+// connects. Keyed by eventId -> clientId -> { name, status, sockets:Set }.
+// The sockets Set (not a single socket id) is what makes multiple tabs on
+// the same device collapse into one person instead of inflating the count.
+const presence = new Map();
+
+function getEventPresence(eventId) {
+  if (!presence.has(eventId)) presence.set(eventId, new Map());
+  return presence.get(eventId);
+}
+
+function presenceList(eventId) {
+  const m = presence.get(eventId);
+  if (!m) return [];
+  return [...m.values()].map((p) => ({ name: p.name, status: p.status }));
+}
+
+// One-shot snapshot (not live) — used by pages that don't hold a live
+// Socket.IO subscription for this specific event, e.g. the Favourite page's
+// "ขอเพลงนี้" modal picks a target event from a dropdown that can differ
+// from whichever event the person is actually joined to.
+app.get('/api/events/:id/presence', (req, res) => {
+  if (!findEvent(req.params.id)) return res.status(404).json({ error: 'ไม่พบ Event นี้' });
+  res.json({ names: presenceList(req.params.id).map((p) => p.name) });
+});
+
+function broadcastPresence(eventId) {
+  io.to('presence:' + eventId).emit('presence-changed', presenceList(eventId));
+}
+
+// Resolve a presence display name back to the clientId that owns it right
+// now, so a "ขอให้คนอื่นร้อง" request can be routed to a specific inbox.
+// Exact match only (name came from the presence datalist, so it should match
+// verbatim) — duplicate names in the same event are an accepted edge case,
+// resolves to whichever matching entry is encountered first.
+function findClientIdByName(eventId, name) {
+  const m = presence.get(eventId);
+  const target = String(name || '').trim();
+  if (!m || !target) return null;
+  for (const [clientId, entry] of m) {
+    if (entry.name === target) return clientId;
+  }
+  return null;
+}
+
+function removeFromPresence(eventId, clientId, socketId) {
+  if (!eventId || !clientId) return;
+  const m = presence.get(eventId);
+  if (!m) return;
+  const entry = m.get(clientId);
+  if (!entry) return;
+  entry.sockets.delete(socketId);
+  if (entry.sockets.size === 0) m.delete(clientId);
+  if (m.size === 0) presence.delete(eventId);
+}
+
+// ---------- Inbox (per-person notifications for "ขอให้คนอื่นร้อง") ----------
+// Unlike presence, this IS persisted — a notification should still be there
+// waiting for someone the next time they open the app, not just while
+// they're actively connected. Delivery is scoped to whoever a socket has
+// declared itself as (via presence-join), using the same clientId that
+// already identifies a person's votes/favourites on this device.
+function publicInboxItem(item) {
+  return item;
+}
+
+function inboxRoom(eventId, clientId) {
+  return 'inbox:' + eventId + ':' + clientId;
+}
+
+function addInboxItem(fields) {
+  const item = {
+    id: newId(),
+    read: false,
+    status: 'pending',
+    respondedAt: null,
+    createdAt: Date.now(),
+    ...fields,
+  };
+  db.inbox.push(item);
+  saveDb();
+  io.to(inboxRoom(item.eventId, item.toClientId)).emit('inbox-new', item);
+  return item;
+}
+
+// Called whenever an admin wipes an event's songs (Clear all Request List /
+// Reset the stage) — leftover inbox items would otherwise reference songIds
+// that no longer exist. Not called for "Clear all Next Show List" alone,
+// since that doesn't touch songs and the inbox items are still valid.
+function clearInboxForEvent(eventId) {
+  const before = db.inbox.length;
+  db.inbox = db.inbox.filter((i) => i.eventId !== eventId);
+  if (db.inbox.length !== before) io.emit('inbox-cleared', { eventId });
+  return before !== db.inbox.length;
+}
+
+// Called after any vote/request write that might be a "ขอให้คนอื่นร้อง" —
+// wrapped in try/catch so a problem here can never break the actual
+// vote/request it's piggybacking on.
+function maybeNotifyRequestOther({ eventId, songId, songTitle, voteType, targetName, fromClientId, fromName }) {
+  try {
+    if (voteType !== 'requestOther' || !fromClientId) return;
+    const trimmedTarget = String(targetName || '').trim();
+    if (!trimmedTarget) return;
+    const toClientId = findClientIdByName(eventId, trimmedTarget);
+    if (!toClientId || toClientId === fromClientId) return;
+    addInboxItem({
+      eventId,
+      kind: 'request',
+      songId,
+      songTitle,
+      fromClientId,
+      fromName: (fromName || '').trim() || 'ไม่ระบุชื่อ',
+      toClientId,
+      toName: trimmedTarget,
+    });
+  } catch (e) {
+    console.error('inbox notify error:', e);
+  }
+}
+
+// Per-song list of "ขอให้คนอื่นร้อง" requests for an event — who asked,
+// who they asked, and how (or whether) it was answered. Used by Admin to
+// see every ask/response at a glance, so it can factor into queue
+// decisions. Deliberately admin-facing only (not merged into the shared
+// /api/state that guests' pages use) since it surfaces who responded and
+// how, which is more than the existing public vote/target data reveals.
+app.get('/api/events/:id/song-request-status', (req, res) => {
+  if (!findEvent(req.params.id)) return res.status(404).json({ error: 'ไม่พบ Event นี้' });
+  const items = db.inbox.filter((i) => i.eventId === req.params.id && i.kind === 'request' && i.songId);
+  const bySong = {};
+  items.forEach((i) => {
+    if (!bySong[i.songId]) bySong[i.songId] = [];
+    bySong[i.songId].push({
+      fromName: i.fromName,
+      toName: i.toName,
+      status: i.status, // 'pending' | 'yes-solo' | 'yes-together' | 'no'
+      createdAt: i.createdAt,
+    });
+  });
+  Object.values(bySong).forEach((list) => list.sort((a, b) => a.createdAt - b.createdAt));
+  res.json({ songs: bySong });
+});
+
+app.get('/api/inbox', (req, res) => {
+  const { eventId, clientId } = req.query;
+  if (!eventId || !clientId) return res.json({ items: [] });
+  const items = db.inbox
+    .filter((i) => i.eventId === eventId && i.toClientId === clientId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(publicInboxItem);
+  res.json({ items });
+});
+
+app.post('/api/inbox/mark-read', (req, res) => {
+  const { eventId, clientId } = req.body || {};
+  if (!eventId || !clientId) return res.json({ ok: true });
+  let changed = false;
+  db.inbox.forEach((i) => {
+    if (i.eventId === eventId && i.toClientId === clientId && !i.read) {
+      i.read = true;
+      changed = true;
+    }
+  });
+  if (changed) saveDb();
+  res.json({ ok: true });
+});
+
+// Respond to a "ขอให้คนอื่นร้อง" request: Yes ร้องได้ / Yes ร้องด้วยกันนะ / No
+// ไม่พร้อม. Also creates a reply notification back to whoever asked.
+app.post('/api/inbox/:id/respond', (req, res) => {
+  const item = db.inbox.find((i) => i.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'ไม่พบข้อความนี้' });
+  const { clientId, response } = req.body || {};
+  if (!clientId || item.toClientId !== clientId) {
+    return res.status(403).json({ error: 'ไม่มีสิทธิ์ตอบข้อความนี้' });
+  }
+  if (item.kind !== 'request') {
+    return res.status(400).json({ error: 'ข้อความนี้ไม่ใช่คำขอที่ต้องตอบ' });
+  }
+  if (!['yes-solo', 'yes-together', 'no'].includes(response)) {
+    return res.status(400).json({ error: 'คำตอบไม่ถูกต้อง' });
+  }
+  if (item.status !== 'pending') {
+    return res.status(409).json({ error: 'ตอบไปแล้ว', item: publicInboxItem(item) });
+  }
+  item.status = response;
+  item.respondedAt = Date.now();
+  saveDb();
+  // Sync any other open tabs of the responder so they see it's answered too.
+  io.to(inboxRoom(item.eventId, item.toClientId)).emit('inbox-updated', item);
+  // Nudge everyone (incl. Admin, who isn't in this private inbox room) to
+  // refetch — Admin uses this to highlight songs with a confirmed "yes".
+  broadcast();
+  // Let the original requester know what the answer was.
+  if (item.fromClientId) {
+    addInboxItem({
+      eventId: item.eventId,
+      kind: 'reply',
+      songId: item.songId,
+      songTitle: item.songTitle,
+      fromClientId: item.toClientId,
+      fromName: item.toName,
+      toClientId: item.fromClientId,
+      toName: item.fromName,
+      status: response,
+    });
+  }
+  res.json({ ok: true, item: publicInboxItem(item) });
+});
+
 // ---------- Socket.IO ----------
 io.on('connection', (socket) => {
   socket.emit('state-changed');
+  socket.data.presenceEventId = null;
+  socket.data.presenceClientId = null;
+
+  // Every handler below is wrapped in try/catch on purpose: an uncaught
+  // throw inside a socket listener can crash the entire Node process (not
+  // just this one connection), which would take Request List/Next Show
+  // List/Admin down for everyone until Azure restarts the app. Presence is
+  // a "nice to have" feature — it must never be able to bring the rest of
+  // the app down with it.
+  socket.on('presence-join', (payload) => {
+    try {
+      const { eventId, clientId, name, status } = payload || {};
+      if (!eventId || !clientId || !findEvent(eventId)) return;
+      // Switching events (or first join): leave whatever room this socket
+      // was previously counted under.
+      if (socket.data.presenceEventId && socket.data.presenceEventId !== eventId) {
+        socket.leave('presence:' + socket.data.presenceEventId);
+        socket.leave(inboxRoom(socket.data.presenceEventId, socket.data.presenceClientId));
+        removeFromPresence(socket.data.presenceEventId, socket.data.presenceClientId, socket.id);
+        broadcastPresence(socket.data.presenceEventId);
+      }
+      socket.data.presenceEventId = eventId;
+      socket.data.presenceClientId = clientId;
+      socket.join('presence:' + eventId);
+      socket.join(inboxRoom(eventId, clientId));
+      const m = getEventPresence(eventId);
+      const entry = m.get(clientId) || { name: '', status: 'physical', sockets: new Set() };
+      entry.name = String(name || 'ผู้ร่วมงาน').trim().slice(0, 60) || 'ผู้ร่วมงาน';
+      entry.status = status === 'online' ? 'online' : 'physical';
+      entry.sockets.add(socket.id);
+      m.set(clientId, entry);
+      broadcastPresence(eventId);
+    } catch (e) {
+      console.error('presence-join error:', e);
+    }
+  });
+
+  socket.on('presence-status', (payload) => {
+    try {
+      const eventId = socket.data.presenceEventId;
+      const clientId = socket.data.presenceClientId;
+      if (!eventId || !clientId) return;
+      const m = presence.get(eventId);
+      const entry = m && m.get(clientId);
+      if (!entry) return;
+      entry.status = (payload && payload.status === 'online') ? 'online' : 'physical';
+      broadcastPresence(eventId);
+    } catch (e) {
+      console.error('presence-status error:', e);
+    }
+  });
+
+  socket.on('presence-leave', () => {
+    try {
+      const eventId = socket.data.presenceEventId;
+      if (!eventId) return;
+      socket.leave('presence:' + eventId);
+      socket.leave(inboxRoom(eventId, socket.data.presenceClientId));
+      removeFromPresence(eventId, socket.data.presenceClientId, socket.id);
+      broadcastPresence(eventId);
+      socket.data.presenceEventId = null;
+      socket.data.presenceClientId = null;
+    } catch (e) {
+      console.error('presence-leave error:', e);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    try {
+      const eventId = socket.data.presenceEventId;
+      if (!eventId) return;
+      removeFromPresence(eventId, socket.data.presenceClientId, socket.id);
+      broadcastPresence(eventId);
+    } catch (e) {
+      console.error('presence disconnect cleanup error:', e);
+    }
+  });
 });
 
 server.listen(PORT, () => {

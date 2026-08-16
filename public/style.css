@@ -93,17 +93,27 @@ header.top .sub {
   margin-top: 2px;
 }
 
-/* Page label ("🎶 Request List — ...") and the login/Favourite status share
-   one row to keep the header compact — label on the left, account info on
-   the right, both on a single line. On narrow phones the label is dropped
-   entirely (kept only in this row, nowhere else) so the account info still
-   fits without wrapping. */
+/* Page label ("🎶 Request List — ...") + presence pill share one row with
+   the login/Favourite status + inbox bell, to keep the header compact —
+   label/presence on the left, account info on the right, both on a single
+   line. On narrow phones the label is dropped entirely (kept only in this
+   row, nowhere else) so the rest still fits without wrapping. align-items
+   is flex-start (not center) so expanding the presence panel below the
+   pill doesn't visually re-center the login status on the taller row. */
 .info-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   margin-top: 4px;
+}
+
+.info-row-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 
 .page-label {
@@ -126,6 +136,15 @@ header.top .sub {
   white-space: nowrap;
 }
 
+/* Groups the login status and the inbox bell together at the top-right of
+   the header, so the bell sits right next to your logged-in name. */
+.info-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .auth-bar a {
   color: var(--accent);
   text-decoration: none;
@@ -133,6 +152,137 @@ header.top .sub {
 
 @media (max-width: 480px) {
   .page-label { display: none; }
+}
+
+/* Presence widget — compact "N คน join" pill, now inline in the info-row
+   next to the page label, expands into a small panel with everyone's
+   name/status + your own status toggle. */
+.presence-widget { flex-shrink: 0; }
+
+.presence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.presence-panel {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.presence-status-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.presence-status-row button {
+  flex: 1;
+  padding: 6px;
+  font-size: 0.8rem;
+}
+
+.presence-status-row button.selected {
+  background: linear-gradient(135deg, var(--accent), #1de39b);
+  color: #04231a;
+}
+
+.presence-person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 0.85rem;
+}
+
+/* Bell icon lives inline next to the login status (top-right of header). Its
+   dropdown is absolutely positioned so opening it never pushes the rest of
+   the page down — sized to its content, not a full-screen overlay. */
+.inbox-widget { position: relative; }
+
+.inbox-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.inbox-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  width: min(300px, 84vw);
+  max-height: 340px;
+  overflow-y: auto;
+  box-shadow: 0 10px 28px rgba(2, 10, 24, 0.5);
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--accent-2);
+  color: #2a1400;
+  font-size: 0.68rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+.inbox-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+.inbox-item:last-child { border-bottom: none; }
+.inbox-item.unread { background: rgba(0, 198, 132, 0.07); border-radius: 8px; padding: 10px 8px; }
+
+.inbox-item-head { line-height: 1.4; }
+
+.inbox-time {
+  float: right;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.inbox-item .btn-row button {
+  font-size: 0.76rem;
+  padding: 6px 4px;
 }
 
 nav.tabs {
@@ -204,6 +354,18 @@ nav.tabs a.active {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Musician page's "คุณคือ ..." card — name/roles text on one side, action
+   buttons on the other. flex-wrap (not float) so a long name + role list
+   drops the buttons to their own line instead of overlapping the text. */
+.name-display-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.name-display-text { min-width: 0; }
 
 button, .btn {
   font-family: inherit;
@@ -527,6 +689,44 @@ label { font-size: 0.78rem; color: var(--text-dim); }
 }
 
 .row-flex .grow { flex: 1; }
+
+/* Admin song-card action cluster (ตรวจ/ขยาย + คิว + ลบ) — sits beside the
+   song info in the card header instead of its own full-width button row,
+   with smaller buttons so the three fit compactly side by side. */
+.admin-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.admin-card-actions button {
+  padding: 7px 9px;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+/* One box per "ขอให้คนอื่นร้อง" request on a song — who asked, who they
+   asked, and the answer (or "ยังไม่ตอบ" while pending). Border colour is
+   the at-a-glance signal: green = yes, orange = no, grey = no answer yet. */
+.admin-request-boxes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.admin-request-box {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 2px solid var(--text-dim);
+  background: var(--bg-card);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.admin-request-box.status-yes { border-color: var(--accent-3); background: rgba(0, 198, 132, 0.12); }
+.admin-request-box.status-no { border-color: var(--accent-2); background: rgba(242, 133, 0, 0.12); }
+.admin-request-box.status-pending { border-color: var(--text-dim); }
 
 .toast {
   position: fixed;

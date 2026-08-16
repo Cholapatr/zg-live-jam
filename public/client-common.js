@@ -32,7 +32,10 @@ function setGuestName(name) {
   if (name && name.trim()) localStorage.setItem('zg_guest_name', name.trim());
 }
 // Ask once (and remember) so votes can be attributed to a name. Cancel/blank
-// still lets them vote — they'll just show up as "ไม่ระบุชื่อ".
+// still lets them vote — they'll just show up as "ไม่ระบุชื่อ". This is a
+// fallback safety net for the rare case someone reaches a vote without ever
+// going through confirmGuestNameForJoin() below (e.g. cleared localStorage
+// mid-session) — normally the name is already set by then.
 function ensureGuestName() {
   let n = getGuestName();
   if (!n) {
@@ -40,6 +43,44 @@ function ensureGuestName() {
     if (typed.trim()) { setGuestName(typed); n = getGuestName(); }
   }
   return n;
+}
+
+// Musician page's own display name — kept separate from the general guest
+// name (via "เปลี่ยน" on that page) in case someone wants a different name
+// specifically for the นักดนตรี role. confirmGuestNameForJoin() below
+// re-syncs it to the guest name every time someone joins an event, though,
+// so it doesn't go stale across events unless they've overridden it.
+function getMyName() { return localStorage.getItem('zg_musician_name') || ''; }
+function setMyName(n) { if (n && n.trim()) localStorage.setItem('zg_musician_name', n.trim()); }
+
+// Musician roles (checkboxes on the Musician page) — also reset to a
+// sensible default ("ช่วยร้อง") every time someone joins an event, same as
+// the name, and just as editable afterward from that page.
+function getMyRoles() {
+  try { return JSON.parse(localStorage.getItem('zg_musician_roles') || '[]'); }
+  catch (e) { return []; }
+}
+function setMyRoles(arr) { localStorage.setItem('zg_musician_roles', JSON.stringify(arr || [])); }
+
+// Asks for (or re-confirms) a display name right when joining an event, so
+// presence never has to fall back to a generic "ผู้ร่วมงาน" placeholder.
+// Suggests the person's logged-in account name if they're signed in
+// (still editable — they can type something else), otherwise whatever name
+// this device already has saved. Cancelling just skips it — they can still
+// join; ensureGuestName() above will ask again the first time they vote.
+// Also syncs the musician-page name to match, so a fresh name entered when
+// joining a new event shows up there too instead of a stale one.
+async function confirmGuestNameForJoin() {
+  let suggested = getGuestName();
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.loggedIn && data.user && data.user.name) suggested = data.user.name;
+  } catch (e) { /* not logged in / offline — fall back to existing device name */ }
+  const typed = prompt('ชื่อของคุณ (ให้คนอื่นใน event นี้รู้จักคุณ)', suggested || '');
+  if (typed !== null && typed.trim()) setGuestName(typed);
+  setMyName(getGuestName());
+  setMyRoles(['🎶 ช่วยร้อง']);
 }
 
 function escapeHtml(str) {
@@ -142,13 +183,270 @@ function renderEventHeader() {
   }
 }
 
+// ---- Presence (who's live-connected to this event right now) ----
+// Purely a live snapshot from the server (never stored anywhere) — a page
+// just announces itself once connected, and re-announces automatically on
+// every reconnect (the Socket.IO client does this on its own after a drop,
+// e.g. WiFi hiccup) since the server-side socket id changes each time.
+let _presenceSocket = null;
+let _presenceList = [];
+let _presenceStatus = localStorage.getItem('zg_presence_status') === 'online' ? 'online' : 'physical';
+
+function getPresenceStatus() { return _presenceStatus; }
+
+function setPresenceStatus(status) {
+  _presenceStatus = status === 'online' ? 'online' : 'physical';
+  localStorage.setItem('zg_presence_status', _presenceStatus);
+  if (_presenceSocket && _presenceSocket.connected) {
+    _presenceSocket.emit('presence-status', { status: _presenceStatus });
+  }
+}
+
+// Call once per page, right after `const socket = io();`, on any
+// event-scoped page that has <div id="presence-widget"> in its header.
+function initPresence(socket) {
+  _presenceSocket = socket;
+  const announce = () => {
+    const eventId = getEventId();
+    if (!eventId) return;
+    socket.emit('presence-join', {
+      eventId,
+      clientId: getClientId(),
+      name: getGuestName() || 'ผู้ร่วมงาน',
+      status: _presenceStatus,
+    });
+  };
+  socket.on('connect', announce);
+  socket.on('presence-changed', (list) => {
+    _presenceList = Array.isArray(list) ? list : [];
+    renderPresenceWidget();
+  });
+  if (socket.connected) announce();
+}
+
+// Tells the server to drop this person from the list right away, instead of
+// waiting for their socket to disconnect — used when explicitly leaving an
+// event via the "Leave" link.
+function presenceLeaveNow() {
+  if (_presenceSocket && _presenceSocket.connected) _presenceSocket.emit('presence-leave');
+  _presenceList = [];
+  renderPresenceWidget();
+}
+
+function renderPresenceWidget() {
+  const el = document.getElementById('presence-widget');
+  if (!el) return;
+  const list = _presenceList;
+  const total = list.length;
+  const onlineCount = list.filter((p) => p.status === 'online').length;
+  const physicalCount = total - onlineCount;
+  const expanded = el.dataset.expanded === '1';
+  const myStatus = getPresenceStatus();
+  el.innerHTML = `
+    <button type="button" class="presence-badge" id="presence-toggle">
+      <span class="presence-dot"></span>
+      <span>${total} join · 📍${physicalCount} 🏠${onlineCount}</span>
+      <span>${expanded ? '▲' : '▼'}</span>
+    </button>
+    ${expanded ? `
+    <div class="presence-panel">
+      <div class="small-note" style="margin:0 0 6px;">สถานะของคุณ</div>
+      <div class="presence-status-row">
+        <button type="button" data-mystatus="physical" class="${myStatus === 'physical' ? 'selected' : ''}">📍 อยู่ในงาน</button>
+        <button type="button" data-mystatus="online" class="${myStatus === 'online' ? 'selected' : ''}">🏠 ออนไลน์</button>
+      </div>
+      ${total ? list.map((p) => `<div class="presence-person">${p.status === 'online' ? '🏠' : '📍'} ${escapeHtml(p.name)}</div>`).join('') : '<div class="empty">ยังไม่มีใคร join</div>'}
+    </div>` : ''}
+  `;
+  document.getElementById('presence-toggle').addEventListener('click', () => {
+    el.dataset.expanded = expanded ? '0' : '1';
+    renderPresenceWidget();
+  });
+  if (expanded) {
+    el.querySelectorAll('button[data-mystatus]').forEach((b) => {
+      b.addEventListener('click', () => setPresenceStatus(b.dataset.mystatus));
+    });
+  }
+  // If the page has <datalist id="presence-names-list">, keep it in sync too
+  // — that's what powers "who to ask to sing" autocomplete inputs.
+  populateNameDatalist('presence-names-list', list.map((p) => p.name));
+}
+
+// Current live list of names in this event (for "ขอให้ใครร้อง" pickers).
+function getPresenceNames() { return _presenceList.map((p) => p.name); }
+
+// Fills a <datalist> with one <option> per name (deduped) so a text input
+// with list="<id>" offers autocomplete suggestions while still accepting
+// free text for anyone not in the list.
+function populateNameDatalist(datalistId, names) {
+  const dl = document.getElementById(datalistId);
+  if (!dl) return;
+  const unique = [...new Set((names || []).filter(Boolean))];
+  dl.innerHTML = unique.map((n) => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+// ---- Inbox (per-person notifications for "ขอให้คนอื่นร้อง") ----
+// Persisted server-side (unlike presence) and delivered live via a private
+// Socket.IO room the server puts this clientId's socket(s) into as part of
+// presence-join — so this only works on pages that also call initPresence().
+let _inboxSocket = null;
+let _inboxItems = [];
+let _inboxEventId = '';
+let _inboxClientId = '';
+
+async function loadInbox() {
+  _inboxEventId = getEventId();
+  _inboxClientId = getClientId();
+  if (!_inboxEventId || !_inboxClientId) return;
+  try {
+    const res = await fetch(`/api/inbox?eventId=${encodeURIComponent(_inboxEventId)}&clientId=${encodeURIComponent(_inboxClientId)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    _inboxItems = data.items || [];
+    renderInboxWidget();
+  } catch (e) { /* offline or server hiccup — badge just stays as-is */ }
+}
+
+// Call once per page, right after initPresence(socket), on any page that has
+// <div id="inbox-widget"> in its header.
+function initInbox(socket) {
+  _inboxSocket = socket;
+  loadInbox();
+  socket.on('connect', loadInbox);
+  socket.on('inbox-new', (item) => {
+    if (item.eventId !== getEventId() || item.toClientId !== getClientId()) return;
+    if (!_inboxItems.some((i) => i.id === item.id)) _inboxItems.unshift(item);
+    renderInboxWidget();
+    showToast(item.kind === 'request'
+      ? `📥 ${item.fromName || 'มีคน'} ขอให้คุณร้อง "${item.songTitle}"`
+      : `📥 ${item.fromName || 'มีคน'} ตอบกลับคำขอเพลง "${item.songTitle}"`);
+  });
+  socket.on('inbox-updated', (item) => {
+    if (item.eventId !== getEventId()) return;
+    const idx = _inboxItems.findIndex((i) => i.id === item.id);
+    if (idx >= 0) _inboxItems[idx] = item; else _inboxItems.unshift(item);
+    renderInboxWidget();
+  });
+  // Admin cleared this event's songs (Clear all Request List / Reset the
+  // stage) — old inbox items would just be pointing at songs that no
+  // longer exist, so drop them here too instead of waiting for a reload.
+  socket.on('inbox-cleared', (data) => {
+    if (!data || data.eventId !== getEventId()) return;
+    _inboxItems = [];
+    renderInboxWidget();
+  });
+}
+
+const INBOX_STATUS_LABEL = {
+  'yes-solo': '✅ ร้องได้',
+  'yes-together': '🤝 ร้องด้วยกันนะ',
+  no: '🙏 ขอบคุณที่ชวน แต่ไม่พร้อม',
+};
+
+// Small inline dropdown right under the bell — sized to its content (like
+// the presence panel), not a full-screen modal, so a handful of messages
+// doesn't take over the whole page.
+function renderInboxWidget() {
+  const el = document.getElementById('inbox-widget');
+  if (!el) return;
+  const unread = _inboxItems.filter((i) => !i.read).length;
+  const expanded = el.dataset.expanded === '1';
+  el.innerHTML = `
+    <button type="button" class="inbox-bell" id="inbox-bell-btn">📥${unread ? `<span class="inbox-badge">${unread}</span>` : ''}</button>
+    ${expanded ? `
+    <div class="inbox-panel">
+      ${_inboxItems.length ? _inboxItems.map(inboxItemHtml).join('') : '<div class="empty" style="padding:16px 4px;">ยังไม่มีข้อความ</div>'}
+    </div>` : ''}
+  `;
+  document.getElementById('inbox-bell-btn').addEventListener('click', () => {
+    const willExpand = el.dataset.expanded !== '1';
+    el.dataset.expanded = willExpand ? '1' : '0';
+    renderInboxWidget();
+    if (willExpand) markInboxRead();
+  });
+  if (expanded) {
+    el.querySelectorAll('button[data-respond]').forEach((btn) => {
+      btn.addEventListener('click', () => respondInbox(btn.dataset.respond, btn.dataset.answer));
+    });
+  }
+}
+
+function inboxItemHtml(item) {
+  const time = new Date(item.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  if (item.kind === 'request') {
+    return `
+    <div class="inbox-item ${item.read ? '' : 'unread'}">
+      <div class="inbox-item-head">
+        <b>${escapeHtml(item.fromName || 'ไม่ระบุชื่อ')}</b> ขอให้คุณร้อง <b>${escapeHtml(item.songTitle)}</b>
+        <span class="inbox-time">${time}</span>
+      </div>
+      ${item.status === 'pending' ? `
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-respond="${item.id}" data-answer="yes-solo">✅ ร้องได้</button>
+        <button data-respond="${item.id}" data-answer="yes-together">🤝 ร้องด้วยกันนะ</button>
+        <button data-respond="${item.id}" data-answer="no">🙏 ไม่พร้อม</button>
+      </div>` : `<div class="small-note" style="margin-top:6px;">คุณตอบไปแล้ว: ${INBOX_STATUS_LABEL[item.status] || ''}</div>`}
+    </div>`;
+  }
+  return `
+  <div class="inbox-item ${item.read ? '' : 'unread'}">
+    <div class="inbox-item-head">
+      <b>${escapeHtml(item.fromName || 'ไม่ระบุชื่อ')}</b> ตอบกลับคำขอเพลง <b>${escapeHtml(item.songTitle)}</b>
+      <span class="inbox-time">${time}</span>
+    </div>
+    <div class="small-note" style="margin-top:6px;">${INBOX_STATUS_LABEL[item.status] || ''}</div>
+  </div>`;
+}
+
+async function respondInbox(id, answer) {
+  try {
+    const res = await fetch(`/api/inbox/${id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: getClientId(), response: answer }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
+    const idx = _inboxItems.findIndex((i) => i.id === id);
+    if (idx >= 0) _inboxItems[idx] = data.item;
+    renderInboxWidget();
+    showToast('ส่งคำตอบแล้ว ✓');
+  } catch (e) {
+    showToast('เกิดข้อผิดพลาด');
+  }
+}
+async function markInboxRead() {
+  if (!_inboxItems.some((i) => !i.read)) return;
+  _inboxItems.forEach((i) => { i.read = true; });
+  renderInboxWidget();
+  try {
+    await fetch('/api/inbox/mark-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId: _inboxEventId, clientId: _inboxClientId }),
+    });
+  } catch (e) { /* best-effort — badge already cleared locally */ }
+}
+
+// True on any page that only makes sense within a joined event (Request
+// List, Next Show List, นักดนตรี, Admin). The server serves index.html for
+// both "/index.html" AND the bare "/" root (e.g. the QR code links to just
+// "/"), but the browser keeps location.pathname as "/" in that case — so a
+// plain .endsWith('index.html') check silently misses it. Handle "/"
+// explicitly instead of relying on the filename showing up in the path.
+function pageRequiresEvent() {
+  const p = location.pathname;
+  if (p === '/') return true;
+  return ['index.html', 'nextshow.html', 'musician.html', 'admin.html'].some((name) => p.endsWith(name));
+}
+
 // Clears the joined event. Pages that require one (Request List, Next Show
 // List, นักดนตรี, Admin) send the person back to events.html; pages that
 // don't (Favourite, Event list itself) just re-render in place.
 function leaveEvent() {
+  presenceLeaveNow();
   clearEvent();
-  const requiresEvent = ['index.html', 'nextshow.html', 'musician.html', 'admin.html'].some((p) => location.pathname.endsWith(p));
-  if (requiresEvent) {
+  if (pageRequiresEvent()) {
     location.href = 'events.html';
     return;
   }
@@ -180,7 +478,7 @@ async function renderAuthBar() {
       const icon = AUTH_PROVIDER_ICON[data.user.provider] || '👤';
       el.innerHTML = `<span>${icon} ${escapeHtml(data.user.name || 'ผู้ใช้')}</span> · ` +
         `<a href="favorites.html">⭐ Favourite (${favCount})</a> · ` +
-        `<a href="/auth/logout?from=${encodeURIComponent(location.pathname)}">ออกจากระบบ</a>`;
+        `<a href="/auth/logout?from=${encodeURIComponent(location.pathname)}">Sign out</a>`;
     } else {
       el.innerHTML = `<span>ยังไม่ได้เข้าสู่ระบบ</span> · ` +
         `<a href="favorites.html">⭐ Favourite</a> · ` +
@@ -200,8 +498,7 @@ async function renderAuthBar() {
 // picker. Forcing a reload on a persisted pageshow re-runs that check fresh.
 window.addEventListener('pageshow', (e) => {
   if (!e.persisted) return;
-  const needsEvent = ['index.html', 'nextshow.html', 'musician.html', 'admin.html'].some((p) => location.pathname.endsWith(p));
-  if (needsEvent && !getEventId()) location.reload();
+  if (pageRequiresEvent() && !getEventId()) location.reload();
 });
 
 let toastTimer = null;

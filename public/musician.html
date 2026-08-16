@@ -19,8 +19,14 @@
     <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
   </div>
   <div class="info-row">
-    <span class="page-label">🎸 Musician — ดู Request List แล้วกดตอบรับเพลงที่จะเล่น</span>
-    <div class="auth-bar" id="auth-bar"></div>
+    <div class="info-row-left">
+      <span class="page-label">🎸 Musician — ดู Request List แล้วกดตอบรับเพลงที่จะเล่น</span>
+      <div id="presence-widget" class="presence-widget"></div>
+    </div>
+    <div class="info-row-right">
+      <div class="auth-bar" id="auth-bar"></div>
+      <div id="inbox-widget" class="inbox-widget"></div>
+    </div>
   </div>
   <nav class="tabs" id="event-nav">
     <a href="index.html">🎶 Request List</a>
@@ -40,9 +46,13 @@
   </div>
 
   <div id="name-display" class="card" style="display:none;">
-    คุณคือ <b id="my-name-label"></b> (<span id="my-role-label"></span>)
-    <button id="btn-change-name" style="float:right;">เปลี่ยนชื่อ</button>
-    <button id="btn-delete-name" class="warn" style="float:right; margin-right:6px;">🗑 ลบชื่อ</button>
+    <div class="name-display-row">
+      <div class="name-display-text">คุณคือ <b id="my-name-label"></b> (<span id="my-role-label"></span>)</div>
+      <div class="btn-row" style="flex-shrink:0;">
+        <button id="btn-change-name">เปลี่ยน</button>
+        <button id="btn-delete-name">🗑 ลบชื่อ</button>
+      </div>
+    </div>
   </div>
 
   <div class="section-title">Request List (เรียงตามคะแนนโหวตของผู้ฟัง)</div>
@@ -64,13 +74,9 @@ const LEVELS = [
 const ROLE_OPTIONS = ['🎸 กีตาร์', '🥁 กลอง', '🎤 ร้อง', '🎶 ช่วยร้อง', '🎹 คีย์บอร์ด/เปียโน', '🎸 เบส', 'อื่นๆ'];
 let selectedRoles = [];
 
-function getMyName() { return localStorage.getItem('zg_musician_name') || ''; }
-function setMyName(n) { localStorage.setItem('zg_musician_name', n); }
-function getMyRoles() {
-  try { return JSON.parse(localStorage.getItem('zg_musician_roles') || '[]'); }
-  catch (e) { return []; }
-}
-function setMyRoles(arr) { localStorage.setItem('zg_musician_roles', JSON.stringify(arr)); }
+// getMyName()/setMyName()/getMyRoles()/setMyRoles() now live in
+// client-common.js (shared with the join-event flow, which re-syncs both
+// every time someone joins an event).
 
 function renderRoleChecks() {
   const el = document.getElementById('role-checks');
@@ -198,6 +204,14 @@ async function loadState() {
 
 const socket = io();
 socket.on('state-changed', loadState);
+initPresence(socket);
+initInbox(socket);
+
+// If this device already has a name from joining the event (set in
+// events.html when they hit "Join Event"), use it here too instead of
+// asking again — they can still hit "เปลี่ยนชื่อ" below if they want a
+// different name specifically for the musician role.
+if (!getMyName() && getGuestName()) setMyName(getGuestName());
 
 refreshNameUi();
 renderEventHeader();

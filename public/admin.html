@@ -19,8 +19,14 @@
     <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
   </div>
   <div class="info-row">
-    <span class="page-label">🛠 Admin — จัดคิว Next Show List และยืนยันคอร์ดเพลง</span>
-    <div class="auth-bar" id="auth-bar"></div>
+    <div class="info-row-left">
+      <span class="page-label">🛠 Admin — จัดคิว Next Show List และยืนยันคอร์ดเพลง</span>
+      <div id="presence-widget" class="presence-widget"></div>
+    </div>
+    <div class="info-row-right">
+      <div class="auth-bar" id="auth-bar"></div>
+      <div id="inbox-widget" class="inbox-widget"></div>
+    </div>
   </div>
   <nav class="tabs" id="event-nav">
     <a href="index.html">🎶 Request List</a>
@@ -165,6 +171,21 @@ function computeStatus(s, already, played) {
   return s.adminStatus || 'unchecked';
 }
 
+// "ขอให้คนอื่นร้อง" request boxes on each song card — border colour maps to
+// the answer: green = yes, orange = no, grey = still pending.
+const REQUEST_STATUS_CLASS = {
+  'yes-solo': 'yes',
+  'yes-together': 'yes',
+  no: 'no',
+  pending: 'pending',
+};
+const REQUEST_STATUS_LABEL = {
+  'yes-solo': '✅ ร้องได้',
+  'yes-together': '🤝 ร้องด้วยกันนะ',
+  no: '🙏 ขอบคุณที่ชวน แต่ไม่พร้อม',
+  pending: 'ยังไม่ตอบ',
+};
+
 let expandedSongs = new Set();
 
 function renderPool() {
@@ -184,13 +205,15 @@ function renderPool() {
     const isOpen = expandedSongs.has(s.id);
     const isChecked = s.adminStatus === 'checked';
     const inQueue = already.has(s.id);
-    const queueBtns = `
-      <div class="btn-row" style="margin-top:8px;">
-        <button data-add="${s.id}" ${(!isChecked || inQueue) ? 'disabled' : ''} class="primary">${inQueue ? '✓ อยู่ในคิวแล้ว' : '+ เพิ่มเข้าคิว'}</button>
-        <button data-remove="${s.id}" ${(!isChecked || !inQueue) ? 'disabled' : ''} class="btn-queue-remove">− ถอดออกจากคิว</button>
-        <button data-del="${s.id}" class="warn">ลบเพลงนี้</button>
-      </div>
-      ${!isChecked ? '<div class="small-note">ต้องกด "ตรวจสอบแล้ว และบันทึก" ก่อน ปุ่ม เพิ่มเข้าคิว/ถอดออกจากคิว จึงจะกดได้ (ลบเพลงนี้กดได้เลยไม่ต้องรอ)</div>' : ''}`;
+    const requests = songRequestStatus[s.id] || [];
+    const requestBoxes = requests.length ? `
+      <div class="admin-request-boxes">
+        ${requests.map(r => `
+        <div class="admin-request-box status-${REQUEST_STATUS_CLASS[r.status] || 'pending'}">
+          🎤 <b>${escapeHtml(r.fromName || 'ไม่ระบุชื่อ')}</b> ขอ <b>${escapeHtml(r.toName || 'ไม่ระบุชื่อ')}</b> ให้ร้อง<br>
+          ${REQUEST_STATUS_LABEL[r.status] || 'ยังไม่ตอบ'}
+        </div>`).join('')}
+      </div>` : '';
     return `
     <div class="card">
       <div class="row-flex">
@@ -200,12 +223,17 @@ function renderPool() {
           <div class="artist" style="margin:0;">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}</div>
           <div class="small-note" style="margin:0;">${s.requestedBy ? 'เสนอโดย ' + escapeHtml(s.requestedBy) : 'ไม่ระบุผู้เสนอ'}</div>
         </div>
-        <button data-toggle="${s.id}" class="${(!isChecked && !isOpen) ? 'btn-verify' : ''}">${isOpen ? '− ย่อ' : (isChecked ? '+ ขยาย' : '+ ตรวจ')}</button>
+        <div class="admin-card-actions">
+          <button data-toggle="${s.id}" class="${(!isChecked && !isOpen) ? 'btn-verify' : ''}">${isOpen ? '− ย่อ' : (isChecked ? '+ ขยาย' : '+ ตรวจ')}</button>
+          <button data-add="${s.id}" ${(!isChecked || inQueue) ? 'disabled' : ''} title="${!isChecked ? 'ต้องตรวจสอบก่อน' : 'เพิ่มเข้าคิว'}" class="${inQueue ? 'primary' : ''}">${inQueue ? '✓ ในคิว' : '+ คิว'}</button>
+          <button data-remove="${s.id}" ${(!isChecked || !inQueue) ? 'disabled' : ''} title="ถอดออกจากคิว">−ออกจากคิว</button>
+          <button data-del="${s.id}" class="warn" title="ลบเพลงนี้ทั้งหมด">🗑</button>
+        </div>
       </div>
       <div class="badge-row" style="margin-top:8px;">
         <span class="badge" style="color:${info.color};border-color:${info.color};">${info.label}</span>
       </div>
-      ${queueBtns}
+      ${requestBoxes}
       <div id="detail-${s.id}" style="display:${isOpen ? '' : 'none'}; margin-top:8px;">
         <label>ชื่อเพลง</label>
         <input type="text" id="titlein-${s.id}" value="${escapeHtml(s.title)}" style="font-weight:600;" />
@@ -405,18 +433,37 @@ async function moveShowTo(songId) {
 
 function render() { renderPool(); renderShow(); }
 
+// Per-song "confirmed yes on ขอให้คนอื่นร้อง" info — admin-only, fetched
+// separately from /api/state (which guests' pages also read from, and this
+// reveals more than the existing public vote data does). See comment above
+// the endpoint in server.js.
+let songRequestStatus = {};
+async function loadSongRequestStatus() {
+  const eventId = getEventId();
+  if (!eventId) return;
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(eventId)}/song-request-status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    songRequestStatus = data.songs || {};
+  } catch (e) { /* best-effort — banner just won't show/update this round */ }
+}
+
 async function loadState() {
   const eventId = getEventId();
   if (!eventId) return; // requireEvent() below is already redirecting to events.html
   const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
   if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
   state = await res.json();
+  await loadSongRequestStatus();
   render();
   updateNavCounts(state);
 }
 
 const socket = io();
 socket.on('state-changed', loadState);
+initPresence(socket);
+initInbox(socket);
 
 renderEventHeader();
 renderAuthBar();
