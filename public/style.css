@@ -878,6 +878,26 @@ label { font-size: 0.78rem; color: var(--text-dim); }
   font-size: 0.9rem;
 }
 
+/* "Favourite ของ xxx" share modal — per-song add button (blue, ZyGen navy-
+   adjacent tone) vs. already-added state (solid green, visually inactive —
+   deliberately NOT the native :disabled style, which would grey/desaturate
+   it; pointer-events:none in the markup itself is what blocks clicks). */
+button.btn-favshare-add {
+  background: linear-gradient(135deg, #2f6fe4, #5b93f0);
+  color: #f3f6fa;
+  font-weight: 600;
+  border: none;
+  white-space: nowrap;
+}
+button.btn-favshare-added {
+  background: linear-gradient(135deg, var(--accent-3), #1de39b);
+  color: #04231a;
+  font-weight: 600;
+  border: none;
+  white-space: nowrap;
+  cursor: default;
+}
+
 button.btn-fav-remove {
   background: transparent;
   color: var(--danger);

@@ -657,6 +657,81 @@ app.post('/api/favorites/import', requireLogin, (req, res) => {
   res.json({ ok: true, favorites: req.user.favorites, imported: addedCount });
 });
 
+// "Share My Favourite" — sends a snapshot of the sender's current favourite
+// list to a friend who is currently online (present in the given event AND
+// logged in — checked via the live presence map, see findPresenceEntryByName
+// below). Delivered through the same inbox system as "ขอให้คนอื่นร้อง", so it
+// shows up in the recipient's inbox bell on whichever event page they're on.
+// Expires 3 days after sharing (kept simple — no per-item "viewed once"
+// tracking, just a timestamp checked when the recipient opens it).
+const FAVSHARE_EXPIRY_MS = 1000 * 60 * 60 * 24 * 3;
+app.post('/api/favorites/share', requireLogin, (req, res) => {
+  const { eventId, targetName } = req.body || {};
+  if (!eventId || !findEvent(eventId)) return res.status(404).json({ error: 'ไม่พบ Event นี้' });
+  const trimmedTarget = String(targetName || '').trim();
+  if (!trimmedTarget) return res.status(400).json({ error: 'กรุณาระบุชื่อเพื่อน' });
+  if (!(req.user.favorites || []).length) return res.status(400).json({ error: 'คุณยังไม่มีเพลงโปรดให้แชร์' });
+
+  const entry = findPresenceEntryByName(eventId, trimmedTarget);
+  if (!entry) {
+    return res.status(404).json({ error: `ไม่พบ "${trimmedTarget}" ใน Event นี้ตอนนี้ — ต้องออนไลน์อยู่ถึงจะแชร์ได้` });
+  }
+  if (!entry.userId) {
+    return res.status(409).json({ notLoggedIn: true, error: `${trimmedTarget} ไม่ได้ล็อกอินเข้าระบบ จึงไม่สามารถแชร์ให้ได้ในตอนนี้` });
+  }
+  if (entry.userId === req.user.id) {
+    return res.status(400).json({ error: 'ไม่สามารถแชร์ให้ตัวเองได้' });
+  }
+
+  const item = addInboxItem({
+    eventId,
+    kind: 'favshare',
+    fromClientId: null,
+    fromName: req.user.name || 'ไม่ระบุชื่อ',
+    toClientId: entry.clientId,
+    toUserId: entry.userId,
+    toName: trimmedTarget,
+    favorites: req.user.favorites.map((f) => ({ title: f.title, artist: f.artist || '', chordUrl: f.chordUrl || '', chordId: f.chordId || '' })),
+    expiresAt: Date.now() + FAVSHARE_EXPIRY_MS,
+  });
+  res.json({ ok: true, item, sharedCount: req.user.favorites.length });
+});
+
+// Recipient copies a shared favourite list into their own — same
+// title+artist merge/de-dupe rule as /api/favorites/import. Must be logged
+// in as the exact account the item was addressed to (toUserId), and the
+// 3-day window must not have passed yet. Pass `index` in the body to copy
+// just that one song (the "ดูรายชื่อเพลง" modal copies one at a time so
+// people can pick and choose); omit it to copy the whole shared list at once.
+app.post('/api/inbox/:id/copy-favorites', requireLogin, (req, res) => {
+  const item = db.inbox.find((i) => i.id === req.params.id);
+  if (!item || item.kind !== 'favshare') return res.status(404).json({ error: 'ไม่พบข้อความนี้' });
+  if (item.toUserId !== req.user.id) return res.status(403).json({ error: 'ไม่มีสิทธิ์คัดลอกข้อความนี้' });
+  if (Date.now() > item.expiresAt) return res.status(410).json({ error: 'ข้อความนี้หมดอายุแล้ว' });
+
+  const { index } = req.body || {};
+  let source = item.favorites || [];
+  if (typeof index === 'number') {
+    const one = source[index];
+    if (!one) return res.status(400).json({ error: 'ไม่พบเพลงนี้ในรายการที่แชร์มา' });
+    source = [one];
+  }
+
+  req.user.favorites = req.user.favorites || [];
+  const keyOf = (f) => (f.title + '|' + f.artist).toLowerCase();
+  const existingKeys = new Set(req.user.favorites.map(keyOf));
+  let addedCount = 0;
+  source.forEach((f) => {
+    const title = (f.title || '').trim();
+    if (!title) return;
+    const clean = { id: newId(), title, artist: (f.artist || '').trim(), chordUrl: f.chordUrl || '', chordId: f.chordId || '', addedAt: Date.now() };
+    const key = keyOf(clean);
+    if (!existingKeys.has(key)) { req.user.favorites.push(clean); existingKeys.add(key); addedCount++; }
+  });
+  saveDb();
+  res.json({ ok: true, imported: addedCount, favorites: req.user.favorites });
+});
+
 // Turns a saved favourite into a real, live Request List entry — same
 // duplicate-chordId guard as adding a song normally applies.
 app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
@@ -1217,19 +1292,26 @@ function broadcastPresence(eventId) {
   io.to('presence:' + eventId).emit('presence-changed', presenceList(eventId));
 }
 
-// Resolve a presence display name back to the clientId that owns it right
-// now, so a "ขอให้คนอื่นร้อง" request can be routed to a specific inbox.
-// Exact match only (name came from the presence datalist, so it should match
-// verbatim) — duplicate names in the same event are an accepted edge case,
-// resolves to whichever matching entry is encountered first.
-function findClientIdByName(eventId, name) {
+// Resolve a presence display name back to its full live entry (clientId +
+// userId if that device is logged in) — exact match only (name came from the
+// presence datalist, so it should match verbatim); duplicate names in the
+// same event are an accepted edge case, resolves to whichever matching entry
+// is encountered first. Used both for routing "ขอให้คนอื่นร้อง" requests and
+// for checking whether a "Share My Favourite" target is actually reachable
+// (present) and logged in.
+function findPresenceEntryByName(eventId, name) {
   const m = presence.get(eventId);
   const target = String(name || '').trim();
   if (!m || !target) return null;
   for (const [clientId, entry] of m) {
-    if (entry.name === target) return clientId;
+    if (entry.name === target) return { clientId, name: entry.name, status: entry.status, userId: entry.userId || null };
   }
   return null;
+}
+
+function findClientIdByName(eventId, name) {
+  const entry = findPresenceEntryByName(eventId, name);
+  return entry ? entry.clientId : null;
 }
 
 function removeFromPresence(eventId, clientId, socketId) {
@@ -1412,7 +1494,7 @@ io.on('connection', (socket) => {
   // the app down with it.
   socket.on('presence-join', (payload) => {
     try {
-      const { eventId, clientId, name, status } = payload || {};
+      const { eventId, clientId, name, status, userId } = payload || {};
       if (!eventId || !clientId || !findEvent(eventId)) return;
       // Switching events (or first join): leave whatever room this socket
       // was previously counted under.
@@ -1427,9 +1509,17 @@ io.on('connection', (socket) => {
       socket.join('presence:' + eventId);
       socket.join(inboxRoom(eventId, clientId));
       const m = getEventPresence(eventId);
-      const entry = m.get(clientId) || { name: '', status: 'physical', sockets: new Set() };
+      const entry = m.get(clientId) || { name: '', status: 'physical', userId: null, sockets: new Set() };
       entry.name = String(name || 'ผู้ร่วมงาน').trim().slice(0, 60) || 'ผู้ร่วมงาน';
       entry.status = status === 'online' ? 'online' : 'physical';
+      // Which account (if any) this device is logged in as right now — lets
+      // "Share My Favourite" know whether a present friend can actually
+      // receive/copy a shared list. Confirmed server-side (findOrCreateUser
+      // owns db.users), not just trusted blindly, but we don't re-verify the
+      // session here — client only sends its own /api/me result, and a stale/
+      // forged userId at worst fails harmlessly at copy-time (requireLogin +
+      // toUserId check there is the real gate).
+      entry.userId = userId || null;
       entry.sockets.add(socket.id);
       m.set(clientId, entry);
       broadcastPresence(eventId);

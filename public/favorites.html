@@ -10,6 +10,7 @@
 <body>
 <div class="toast" id="toast"></div>
 <datalist id="fav-presence-names-list"></datalist>
+<datalist id="share-presence-names-list"></datalist>
 
 <header class="top">
   <div class="brand-row">
@@ -41,7 +42,8 @@
     <div class="section-title" style="margin-top:0;">เพลงโปรดของคุณ</div>
     <input type="text" id="f-search" placeholder="🔍 ค้นหาเพลงโปรด (ชื่อเพลง/ศิลปิน)" style="margin-bottom:10px;" />
     <div id="fav-list"><div class="empty">กำลังโหลด...</div></div>
-    <div class="btn-row" style="margin-top:16px;">
+    <button id="btn-share" style="width:100%; margin-top:16px;">🔗 Share My Favourite ให้เพื่อน</button>
+    <div class="btn-row" style="margin-top:10px;">
       <button id="btn-backup" style="flex:1;">💾 Backup</button>
       <button id="btn-restore" style="flex:1;">📂 Restore</button>
     </div>
@@ -185,6 +187,28 @@
 
     <div class="btn-row" style="margin-top:14px;">
       <button class="primary" id="btn-req-submit" style="flex:1;">ส่งคำขอ</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share My Favourite modal -->
+<div class="modal-bg" id="share-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="share-modal-close">✕</button>
+    <h2>🔗 Share My Favourite</h2>
+    <div class="small-note" style="margin-bottom:14px;">
+      ส่งรายการเพลงโปรดของคุณตอนนี้ (<span id="share-fav-count"></span> เพลง) ให้เพื่อนที่กำลังออนไลน์อยู่ในงาน — เพื่อนจะได้รับข้อความใน inbox และกดคัดลอกเข้ารายการโปรดของตัวเองได้<br><br>
+      เพื่อนต้อง <b>join event และเข้าสู่ระบบ</b> อยู่ตอนนั้นถึงจะแชร์ให้ได้ (ข้อความจะหมดอายุใน 3 วัน)
+    </div>
+
+    <label>Event ที่เพื่อนกำลัง join อยู่ *</label>
+    <select id="f-share-event"></select>
+
+    <label style="display:block; margin-top:8px;">ชื่อเพื่อนที่จะแชร์ให้ *</label>
+    <input type="text" id="f-share-target" list="share-presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-share-submit" style="flex:1;">🔗 ส่ง Share</button>
     </div>
   </div>
 </div>
@@ -601,6 +625,59 @@ async function submitFavRequest(confirmReplay) {
 }
 
 document.getElementById('btn-req-submit').addEventListener('click', () => submitFavRequest(false));
+
+// ---- Share My Favourite ----
+async function openShareModal() {
+  if (!favorites.length) { showToast('ยังไม่มีเพลงโปรดให้แชร์'); return; }
+  document.getElementById('share-fav-count').textContent = favorites.length;
+  document.getElementById('f-share-target').value = '';
+
+  await loadEventsForPicker();
+  const sel = document.getElementById('f-share-event');
+  const currentEventId = getEventId();
+  if (!events.length) {
+    sel.innerHTML = '<option value="">— ยังไม่มี Event ให้เลือก —</option>';
+  } else {
+    sel.innerHTML = events.map(e => `<option value="${e.id}" ${e.id === currentEventId ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('');
+  }
+  await refreshSharePresenceNames();
+
+  document.getElementById('share-modal-bg').style.display = 'flex';
+}
+function closeShareModal() { document.getElementById('share-modal-bg').style.display = 'none'; }
+document.getElementById('btn-share').addEventListener('click', openShareModal);
+document.getElementById('share-modal-close').addEventListener('click', closeShareModal);
+document.getElementById('share-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'share-modal-bg') closeShareModal(); });
+
+async function refreshSharePresenceNames() {
+  const eventId = document.getElementById('f-share-event').value;
+  if (!eventId) { populateNameDatalist('share-presence-names-list', []); return; }
+  try {
+    const res = await fetch(`/api/events/${encodeURIComponent(eventId)}/presence`);
+    if (!res.ok) { populateNameDatalist('share-presence-names-list', []); return; }
+    const data = await res.json();
+    populateNameDatalist('share-presence-names-list', data.names || []);
+  } catch (e) {
+    populateNameDatalist('share-presence-names-list', []);
+  }
+}
+document.getElementById('f-share-event').addEventListener('change', refreshSharePresenceNames);
+
+document.getElementById('btn-share-submit').addEventListener('click', async () => {
+  const eventId = document.getElementById('f-share-event').value;
+  if (!eventId) { showToast('กรุณาเลือก Event ก่อน'); return; }
+  const targetName = document.getElementById('f-share-target').value.trim();
+  if (!targetName) { showToast('กรุณาใส่ชื่อเพื่อน'); return; }
+  const res = await fetch('/api/favorites/share', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId, targetName }),
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
+  closeShareModal();
+  showToast(`แชร์ให้ ${targetName} เรียบร้อยแล้ว ✓`);
+});
 
 // ---- Backup (export) / Restore (import) ----
 // Backup doesn't download right away — it explains what the file is for

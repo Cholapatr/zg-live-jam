@@ -202,18 +202,37 @@ function setPresenceStatus(status) {
   }
 }
 
+// Cached once per page load — whether this browser is currently logged in,
+// and to which account. Used to tell the server "I'm logged in" as part of
+// presence-join, so "Share My Favourite" can tell whether a present friend
+// is actually reachable (logged in) before trying to deliver to them.
+let _myUserIdFetched = false;
+let _myUserId = null;
+async function getMyUserId() {
+  if (_myUserIdFetched) return _myUserId;
+  _myUserIdFetched = true;
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    _myUserId = (data.loggedIn && data.user) ? data.user.id : null;
+  } catch (e) { _myUserId = null; }
+  return _myUserId;
+}
+
 // Call once per page, right after `const socket = io();`, on any
 // event-scoped page that has <div id="presence-widget"> in its header.
 function initPresence(socket) {
   _presenceSocket = socket;
-  const announce = () => {
+  const announce = async () => {
     const eventId = getEventId();
     if (!eventId) return;
+    const userId = await getMyUserId();
     socket.emit('presence-join', {
       eventId,
       clientId: getClientId(),
       name: getGuestName() || 'ผู้ร่วมงาน',
       status: _presenceStatus,
+      userId,
     });
   };
   socket.on('connect', announce);
@@ -317,9 +336,11 @@ function initInbox(socket) {
     if (item.eventId !== getEventId() || item.toClientId !== getClientId()) return;
     if (!_inboxItems.some((i) => i.id === item.id)) _inboxItems.unshift(item);
     renderInboxWidget();
-    showToast(item.kind === 'request'
-      ? `📥 ${item.fromName || 'มีคน'} ขอให้คุณร้อง "${item.songTitle}"`
-      : `📥 ${item.fromName || 'มีคน'} ตอบกลับคำขอเพลง "${item.songTitle}"`);
+    let msg;
+    if (item.kind === 'request') msg = `📥 ${item.fromName || 'มีคน'} ขอให้คุณร้อง "${item.songTitle}"`;
+    else if (item.kind === 'favshare') msg = `📥 ${item.fromName || 'มีคน'} แชร์เพลงโปรดให้คุณ (${(item.favorites || []).length} เพลง)`;
+    else msg = `📥 ${item.fromName || 'มีคน'} ตอบกลับคำขอเพลง "${item.songTitle}"`;
+    showToast(msg);
   });
   socket.on('inbox-updated', (item) => {
     if (item.eventId !== getEventId()) return;
@@ -368,6 +389,9 @@ function renderInboxWidget() {
     el.querySelectorAll('button[data-respond]').forEach((btn) => {
       btn.addEventListener('click', () => respondInbox(btn.dataset.respond, btn.dataset.answer));
     });
+    el.querySelectorAll('button[data-favshare-view]').forEach((btn) => {
+      btn.addEventListener('click', () => openFavShareModal(btn.dataset.favshareView));
+    });
   }
 }
 
@@ -388,6 +412,21 @@ function inboxItemHtml(item) {
       </div>` : `<div class="small-note" style="margin-top:6px;">คุณตอบไปแล้ว: ${INBOX_STATUS_LABEL[item.status] || ''}</div>`}
     </div>`;
   }
+  if (item.kind === 'favshare') {
+    const expired = Date.now() > item.expiresAt;
+    const favs = item.favorites || [];
+    return `
+    <div class="inbox-item ${item.read ? '' : 'unread'}">
+      <div class="inbox-item-head">
+        <b>${escapeHtml(item.fromName || 'ไม่ระบุชื่อ')}</b> แชร์เพลงโปรดให้คุณ (${favs.length} เพลง)
+        <span class="inbox-time">${time}</span>
+      </div>
+      ${expired ? `<div class="small-note" style="margin-top:6px;">⌛ หมดอายุแล้ว (แชร์ไว้เกิน 3 วัน)</div>` : `
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-favshare-view="${item.id}">👀 ดูรายชื่อเพลง</button>
+      </div>`}
+    </div>`;
+  }
   return `
   <div class="inbox-item ${item.read ? '' : 'unread'}">
     <div class="inbox-item-head">
@@ -396,6 +435,108 @@ function inboxItemHtml(item) {
     </div>
     <div class="small-note" style="margin-top:6px;">${INBOX_STATUS_LABEL[item.status] || ''}</div>
   </div>`;
+}
+
+// ---- "Favourite ของ <ชื่อคนแชร์>" modal ----
+// Opened from a favshare inbox item's "ดูรายชื่อเพลง" button. Built and
+// injected into the DOM on first use (rather than living as static markup
+// in every page) since the inbox widget itself is shared across four
+// different pages (index/nextshow/musician/admin) via this one file.
+// Copies one song at a time so the recipient can pick and choose, instead of
+// an all-or-nothing bulk import.
+function ensureFavShareModal() {
+  if (document.getElementById('favshare-modal-bg')) return;
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <div class="modal-bg" id="favshare-modal-bg" style="display:none;">
+      <div class="modal">
+        <button class="close-x" id="favshare-modal-close">✕</button>
+        <h2 id="favshare-modal-title">⭐ Favourite</h2>
+        <div id="favshare-modal-list"></div>
+        <button id="favshare-modal-done" style="width:100%; margin-top:14px;">ปิดหน้าต่างนี้</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div.firstElementChild);
+  document.getElementById('favshare-modal-close').addEventListener('click', closeFavShareModal);
+  document.getElementById('favshare-modal-done').addEventListener('click', closeFavShareModal);
+  document.getElementById('favshare-modal-bg').addEventListener('click', (e) => {
+    if (e.target.id === 'favshare-modal-bg') closeFavShareModal();
+  });
+}
+function closeFavShareModal() {
+  const el = document.getElementById('favshare-modal-bg');
+  if (el) el.style.display = 'none';
+}
+
+async function openFavShareModal(itemId) {
+  const item = _inboxItems.find((i) => i.id === itemId);
+  if (!item) return;
+  ensureFavShareModal();
+
+  // Check which of the shared songs the recipient already has, so those
+  // rows can show as already-added instead of an active copy button.
+  let myKeys = new Set();
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.loggedIn) {
+      myKeys = new Set((data.favorites || []).map((f) => (f.title + '|' + (f.artist || '')).toLowerCase()));
+    }
+  } catch (e) { /* best-effort — worst case a row's button just tries and no-ops */ }
+
+  document.getElementById('favshare-modal-title').textContent = `⭐ Favourite ของ ${item.fromName || 'ไม่ระบุชื่อ'}`;
+  renderFavShareModalList(item, myKeys);
+  document.getElementById('favshare-modal-bg').style.display = 'flex';
+}
+
+function renderFavShareModalList(item, myKeys) {
+  const el = document.getElementById('favshare-modal-list');
+  const favs = item.favorites || [];
+  if (!favs.length) { el.innerHTML = '<div class="empty">ไม่มีเพลงโปรดในรายการนี้</div>'; return; }
+  el.innerHTML = favs.map((f, idx) => {
+    const key = (f.title + '|' + (f.artist || '')).toLowerCase();
+    const already = myKeys.has(key);
+    const chordLink = f.chordUrl ? `<a href="${f.chordUrl}" target="_blank" rel="noopener" class="link-out" style="margin-top:0;">↗ ดูคอร์ด</a>` : '';
+    return `
+    <div class="card fav-card">
+      <div class="fav-row">
+        <div class="fav-info">
+          <div class="fav-title">${escapeHtml(f.title)}</div>
+          <div class="fav-sub">${escapeHtml(f.artist || 'ไม่ระบุศิลปิน')}${chordLink ? ' · ' + chordLink : ''}</div>
+        </div>
+        <div class="fav-actions">
+          ${already
+            ? `<button class="btn-favshare-added" style="pointer-events:none;">✓ มีอยู่แล้ว</button>`
+            : `<button class="btn-favshare-add" data-favshare-copy-one="${idx}">+ Add to My Favorite</button>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('button[data-favshare-copy-one]').forEach((btn) => {
+    btn.addEventListener('click', () => copyOneFavShareSong(item.id, parseInt(btn.dataset.favshareCopyOne, 10), btn));
+  });
+}
+
+async function copyOneFavShareSong(itemId, index, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/inbox/${itemId}/copy-favorites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); btn.disabled = false; return; }
+    btn.disabled = false;
+    btn.classList.remove('btn-favshare-add');
+    btn.classList.add('btn-favshare-added');
+    btn.style.pointerEvents = 'none';
+    btn.textContent = '✓ มีอยู่แล้ว';
+    showToast(data.imported > 0 ? 'คัดลอกเข้ารายการโปรดแล้ว ⭐' : 'เพลงนี้อยู่ในรายการโปรดของคุณอยู่แล้ว');
+  } catch (e) {
+    showToast('เกิดข้อผิดพลาด');
+    btn.disabled = false;
+  }
 }
 
 async function respondInbox(id, answer) {
