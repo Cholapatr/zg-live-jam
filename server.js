@@ -118,6 +118,26 @@ function publicEvent(e) {
     contactEmail: e.contactEmail || '',
     contactMobile: e.contactMobile || '',
     createdAt: e.createdAt,
+    live: publicLive(e),
+  };
+}
+
+// Live Broadcast link (set on the Live Broadcast page). Only http(s) URLs are
+// accepted so a stored value can never be a javascript: link.
+function clampInt(v, lo, hi, dflt) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+}
+function clampNum(v, lo, hi, dflt) {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== '' && v !== null ? Math.min(hi, Math.max(lo, n)) : dflt;
+}
+function publicLive(e) {
+  const l = e.live || {};
+  return {
+    on: !!(l.on && l.url), url: l.url || '', label: l.label || '',
+    chatMaxLen: clampInt(l.chatMaxLen, 10, 1000, 200),       // max characters per chat message
+    chatIntervalSec: clampNum(l.chatIntervalSec, 0, 60, 1),  // min seconds between one person's messages
   };
 }
 
@@ -814,6 +834,30 @@ app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
 // scoped to one event, via ?eventId= on reads or eventId in the body on
 // writes. Favourites are intentionally NOT scoped to an event — they're
 // personal and can be prepared before any specific event is picked.
+app.get('/api/events/:id/live', (req, res) => {
+  const ev = findEvent(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'ไม่พบ Event' });
+  res.json(publicLive(ev));
+});
+
+app.post('/api/admin/events/:id/live', checkPin, (req, res) => {
+  const ev = findEvent(req.params.id);
+  if (!ev) return res.status(404).json({ error: 'ไม่พบ Event' });
+  const { on, url, label, chatMaxLen, chatIntervalSec } = req.body || {};
+  const u = String(url || '').trim();
+  if (u && !/^https?:\/\/\S+$/i.test(u)) return res.status(400).json({ error: 'ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://' });
+  if (on && !u) return res.status(400).json({ error: 'ต้องใส่ลิงก์ก่อนเปิด Live' });
+  ev.live = {
+    on: !!on, url: u.slice(0, 500), label: String(label || '').trim().slice(0, 100),
+    chatMaxLen: clampInt(chatMaxLen, 10, 1000, 200),
+    chatIntervalSec: clampNum(chatIntervalSec, 0, 60, 1),
+    updatedAt: Date.now(),
+  };
+  saveDb();
+  broadcast();
+  res.json({ ok: true, live: publicLive(ev) });
+});
+
 app.get('/api/events', (req, res) => {
   // Earliest-created first, so the event list reads top-to-bottom in the
   // order the events were set up.
@@ -1621,6 +1665,8 @@ app.post('/api/inbox/:id/respond', (req, res) => {
 });
 
 // ---------- Socket.IO ----------
+const chatLog = new Map(); // eventId -> last messages
+const REACTION_EMOJIS = ['❤️', '👍', '👏', '🔥', '🎉', '😆', '🎸', '🤟'];
 io.on('connection', (socket) => {
   socket.emit('state-changed');
   socket.data.presenceEventId = null;
@@ -1680,6 +1726,61 @@ io.on('connection', (socket) => {
       broadcastPresence(eventId);
     } catch (e) {
       console.error('presence-status error:', e);
+    }
+  });
+
+  // Emoji reactions (❤️ 👏 …) — sent by anyone in the event (mainly people
+  // watching the live stream from home) and shown to everyone in the event.
+  socket.on('reaction', (p) => {
+    try {
+      const { eventId, emoji, name, where } = p || {};
+      if (!REACTION_EMOJIS.includes(emoji) || !eventId || !findEvent(eventId)) return;
+      const now = Date.now();
+      if (now - (socket.data.lastReaction || 0) < 400) return; // anti-spam
+      socket.data.lastReaction = now;
+      io.to('presence:' + eventId).emit('reaction', {
+        eventId, emoji,
+        name: String(name || 'ผู้ร่วมงาน').trim().slice(0, 60) || 'ผู้ร่วมงาน',
+        where: where === 'online' ? 'online' : 'physical',
+        at: now,
+      });
+    } catch (e) {
+      console.error('reaction error:', e);
+    }
+  });
+
+  // Live chat (watch.html): short text messages shared with everyone in the
+  // event. Kept in memory only (last 100 per event) — a restart clears them.
+  socket.on('chat-send', (p) => {
+    try {
+      const { eventId, text, name, where } = p || {};
+      if (!eventId || !findEvent(eventId) || socket.data.presenceEventId !== eventId) return;
+      const cfg = publicLive(findEvent(eventId)); // per-event limits set on the Live Broadcast page
+      const clean = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, cfg.chatMaxLen);
+      if (!clean) return;
+      const now = Date.now();
+      if (now - (socket.data.lastChat || 0) < cfg.chatIntervalSec * 1000) return; // anti-spam
+      socket.data.lastChat = now;
+      const msg = {
+        id: crypto.randomBytes(6).toString('hex'), eventId, text: clean,
+        name: String(name || 'ผู้ร่วมงาน').trim().slice(0, 60) || 'ผู้ร่วมงาน',
+        where: where === 'online' ? 'online' : 'physical', at: now,
+      };
+      const list = chatLog.get(eventId) || [];
+      list.push(msg);
+      if (list.length > 100) list.shift();
+      chatLog.set(eventId, list);
+      io.to('presence:' + eventId).emit('chat-message', msg);
+    } catch (e) {
+      console.error('chat-send error:', e);
+    }
+  });
+  socket.on('chat-history', (p, cb) => {
+    try {
+      const eventId = p && p.eventId;
+      if (typeof cb === 'function') cb(findEvent(eventId) ? (chatLog.get(eventId) || []).slice(-50) : []);
+    } catch (e) {
+      console.error('chat-history error:', e);
     }
   });
 

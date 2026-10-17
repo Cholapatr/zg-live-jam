@@ -238,6 +238,8 @@ function initPresence(socket) {
     });
   };
   socket.on('connect', announce);
+  socket.on('reaction', showReaction);
+  socket.on('chat-message', showChatToast);
   socket.on('presence-changed', (list) => {
     _presenceList = Array.isArray(list) ? list : [];
     renderPresenceWidget();
@@ -600,6 +602,128 @@ function getModeLabel() {
 const ZY_COVERS = [1,2,3,4,5,6,7,8,9,10,11,12,13,15]
   .map((n) => `/assets/cover/cover-${String(n).padStart(2, '0')}.jpg`);
 
+const IN_FRAME = window.self !== window.top; // true inside the watch.html shell
+
+// Turn a live link into something we can put in an <iframe>, or null when the
+// platform can't be embedded (Teams, Zoom, …) — then only "open separately" shows.
+function liveEmbedUrl(url) {
+  let u;
+  try { u = new URL(url); } catch (e) { return null; }
+  const host = u.hostname.replace(/^www\./, '').replace(/^m\./, '');
+  let id = '';
+  if (host === 'youtu.be') id = u.pathname.slice(1);
+  else if (host === 'youtube.com') {
+    if (u.pathname === '/watch') id = u.searchParams.get('v') || '';
+    else { const m = u.pathname.match(/^\/(live|embed|shorts)\/([\w-]{6,})/); if (m) id = m[2]; }
+  }
+  if (id && /^[\w-]{6,}$/.test(id)) return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+  if (host === 'facebook.com' || host === 'fb.watch') {
+    return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false&autoplay=true`;
+  }
+  return null;
+}
+
+// Red "LIVE" bar under the header of the joined event when Admin has switched
+// Live Broadcast on (link set on live.html). Polled every 30s. Two actions:
+// open the stream in a separate window, or watch inside this site (watch.html:
+// video on one half, the normal app on the other half).
+function initLiveBanner() {
+  const hdr = document.querySelector('header.top');
+  const id = getEventId();
+  if (IN_FRAME || !hdr || !id || document.getElementById('live-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'live-banner';
+  bar.className = 'live-banner';
+  bar.style.display = 'none';
+  hdr.insertAdjacentElement('afterend', bar);
+  const tick = async () => {
+    try {
+      const r = await fetch(`/api/events/${encodeURIComponent(id)}/live`);
+      if (!r.ok) return;
+      const l = await r.json();
+      if (l.on && /^https?:\/\//i.test(l.url)) {
+        bar.innerHTML = '';
+        const t = document.createElement('span');
+        t.className = 'live-banner-text';
+        t.textContent = `🔴 กำลัง Live อยู่${l.label ? ' — ' + l.label : ''}`;
+        const a = document.createElement('a');
+        a.href = l.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = '↗ ดูผ่านหน้าต่างแยก';
+        bar.append(t, a);
+        if (liveEmbedUrl(l.url)) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = '▶ ดูในเว็บนี้';
+          b.onclick = () => {
+            const page = location.pathname.split('/').pop() || 'index.html';
+            location.href = 'watch.html?p=' + encodeURIComponent(page);
+          };
+          bar.append(b);
+        }
+        bar.style.display = '';
+      } else bar.style.display = 'none';
+    } catch (e) { /* offline */ }
+  };
+  tick();
+  setInterval(tick, 30000);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initLiveBanner);
+else initLiveBanner();
+
+// ---- Live chat (UI lives in watch.html) ----
+// Read fresh from localStorage: the watch shell and the page inside its frame
+// are separate scripts, so either may have changed the choice.
+function currentPresenceStatus() { return localStorage.getItem('zg_presence_status') === 'online' ? 'online' : 'physical'; }
+function sendChat(text) {
+  if (!_presenceSocket || !_presenceSocket.connected || !getEventId()) return false;
+  _presenceSocket.emit('chat-send', { eventId: getEventId(), text, name: getGuestName() || 'ผู้ร่วมงาน', where: currentPresenceStatus() });
+  return true;
+}
+// People not in the watch view still see chat lines pass by (same little feed
+// as reactions). The watch shell turns this off — it shows its own chat panel.
+function showChatToast(m) {
+  if (IN_FRAME || window.ZG_SUPPRESS_CHAT_TOAST || !m || m.eventId !== getEventId() || !document.body) return;
+  let box = document.getElementById('reaction-feed');
+  if (!box) { box = document.createElement('div'); box.id = 'reaction-feed'; box.className = 'reaction-feed'; document.body.appendChild(box); }
+  const row = document.createElement('div');
+  row.className = 'reaction-row';
+  row.textContent = `💬 ${m.name}${m.where === 'online' ? ' · ทางบ้าน' : ''}: ${m.text.length > 80 ? m.text.slice(0, 80) + '…' : m.text}`;
+  box.appendChild(row);
+  while (box.children.length > 5) box.removeChild(box.firstChild);
+  setTimeout(() => row.remove(), 8000);
+}
+
+// ---- Emoji reactions ----
+const REACTION_EMOJIS = ['❤️', '👍', '👏', '🔥', '🎉', '😆', '🎸', '🤟'];
+function sendReaction(emoji) {
+  if (!_presenceSocket || !_presenceSocket.connected || !getEventId()) return;
+  _presenceSocket.emit('reaction', { eventId: getEventId(), emoji, name: getGuestName() || 'ผู้ร่วมงาน', where: currentPresenceStatus() });
+}
+// Floating emoji + a small "who pressed what" feed, bottom-left of any page.
+// (Skipped inside the watch.html frame — the shell shows it once for both.)
+function showReaction(r) {
+  if (IN_FRAME || !r || r.eventId !== getEventId() || !document.body) return;
+  let box = document.getElementById('reaction-feed');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'reaction-feed';
+    box.className = 'reaction-feed';
+    document.body.appendChild(box);
+  }
+  const row = document.createElement('div');
+  row.className = 'reaction-row';
+  row.textContent = `${r.emoji} ${r.name}${r.where === 'online' ? ' · ทางบ้าน' : ''}`;
+  box.appendChild(row);
+  while (box.children.length > 5) box.removeChild(box.firstChild);
+  setTimeout(() => row.remove(), 6000);
+  const fl = document.createElement('div');
+  fl.className = 'reaction-float';
+  fl.textContent = r.emoji;
+  fl.style.left = (10 + Math.random() * 80) + 'vw';
+  document.body.appendChild(fl);
+  setTimeout(() => fl.remove(), 3000);
+}
+
 // Who am I (login + roles)? One /api/me call per page, shared by callers.
 let _myAuthPromise = null;
 function getMyAuth() {
@@ -631,6 +755,7 @@ function initPageChrome() {
     a.className = 'home-link';
     a.title = 'ออกไปหน้าแรก (เลือกโหมดใหม่)';
     a.textContent = '🚪 Exit';
+    if (IN_FRAME) a.target = '_top';
     const logo = row.querySelector('img.brand-logo');
     row.insertBefore(a, logo || null);
   }
@@ -649,7 +774,7 @@ function initPageChrome() {
   }
   // ZyGen mode only: the logo opens a small hidden menu (first item: Master Data).
   const logo = row && row.querySelector('img.brand-logo');
-  if (logo && getMode() === 'zygen' && !logo.dataset.menu) {
+  if (logo && !logo.dataset.menu) {
     logo.dataset.menu = '1';
     const wrap = document.createElement('div');
     wrap.className = 'logo-menu-wrap';
@@ -658,11 +783,12 @@ function initPageChrome() {
     logo.style.cursor = 'pointer';
     const menu = document.createElement('div');
     menu.className = 'logo-menu';
-    menu.innerHTML = '<a href="events.html">🏠 Home</a>';
+    menu.innerHTML = '<a href="events.html"' + (IN_FRAME ? ' target="_top"' : '') + '>🏠 Home</a>';
     getMyAuth().then((me) => {
       const r = (me && me.roles) || {};
-      if (r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="employees.html">🗂 Master Data</a>');
-      if (r.superadmin) menu.insertAdjacentHTML('beforeend', '<a href="role.html">🔑 Role</a>');
+      if (getMode() === 'zygen' && r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="employees.html">🗂 Master Data</a>');
+      if (getMode() === 'zygen' && r.superadmin) menu.insertAdjacentHTML('beforeend', '<a href="role.html">🔑 Role</a>');
+      menu.insertAdjacentHTML('beforeend', '<a href="live.html">🔴 Live Broadcast</a>');
       menu.insertAdjacentHTML('beforeend', '<div class="logo-menu-who">' + (me && me.loggedIn
         ? 'ล็อกอิน: ' + escapeHtml([me.user.email].concat(me.user.altEmails || []).filter((v, i, a) => v && a.indexOf(v) === i).join(', ') || '(ไม่มีอีเมล)')
         : 'ยังไม่ได้ล็อกอิน') + '</div>');

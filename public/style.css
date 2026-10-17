@@ -942,10 +942,11 @@ button.btn-fav-request {
     var(--zy-cover) center / cover no-repeat;
 }
 body.theme-zygen { background: #051a3a; }
+/* Header stays a solid navy bar (same as Any Event); the picture shows only below it. */
 body.theme-zygen header.top {
-  background:
-    linear-gradient(180deg, rgba(2, 29, 68, 0.72), rgba(2, 29, 68, 0.90)),
-    var(--zy-cover) center 30% / cover no-repeat;
+  background: #021d44;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border-bottom-color: rgba(0, 198, 132, 0.55);
 }
 body.theme-zygen .card {
@@ -979,3 +980,13 @@ body.theme-zygen .home-link { border-color: rgba(242, 133, 0, 0.7); color: #ffd9
 
 .role-actionbar { display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5; padding:8px 0; background:var(--bg-card); }
 .emp-table th label { cursor:pointer; display:inline-flex; gap:6px; align-items:center; }
+
+
+.live-banner { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px 12px; padding:8px 12px; background:#d62828; color:#fff; font-weight:700; font-size:14px; }
+.live-banner a, .live-banner button { color:#fff; background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.5); border-radius:999px; padding:5px 12px; font-size:13px; font-weight:700; text-decoration:none; cursor:pointer; font-family:inherit; }
+.live-banner a:hover, .live-banner button:hover { background:rgba(0,0,0,.45); }
+.reaction-feed { position:fixed; left:10px; bottom:10px; z-index:90; display:flex; flex-direction:column; gap:4px; pointer-events:none; }
+.reaction-row { background:rgba(0,0,0,.65); color:#fff; padding:5px 12px; border-radius:999px; font-size:14px; animation:rx-in .2s ease-out; }
+.reaction-float { position:fixed; bottom:0; z-index:90; font-size:42px; pointer-events:none; animation:rx-up 3s ease-out forwards; }
+@keyframes rx-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes rx-up { from { opacity:1; transform:translateY(0) scale(.8); } to { opacity:0; transform:translateY(-70vh) scale(1.6); } }

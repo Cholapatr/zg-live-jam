@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — ดู Live</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; background: #06142b; }
+.wtop { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #d62828; color: #fff; font-size: 14px; font-weight: 700; }
+.wtop .grow { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wtop a, .wtop button { color: #fff; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.5); border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; font-family: inherit; }
+.wmain { flex: 1; display: flex; min-height: 0; }
+.wvideo { width: 50%; display: flex; flex-direction: column; background: #000; flex: none; }
+.wframe { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.wframe iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.wend { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; background: rgba(0,0,0,.85); color: #fff; padding: 16px; }
+.wreact { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 10px; background: #0b2347; }
+.wreact button { font-size: 26px; line-height: 1; padding: 8px 12px; border-radius: 14px; border: 1px solid var(--border); background: rgba(255,255,255,.06); cursor: pointer; }
+.wreact button:active { transform: scale(1.25); }
+.wreact-title { width: 100%; text-align: center; color: var(--text-dim); font-size: 12px; }
+.wapp { flex: 1; min-width: 0; }
+.wapp iframe { width: 100%; height: 100%; border: 0; background: #06142b; }
+@media (max-width: 899px) {
+  .wmain { flex-direction: column; }
+  .wvideo { width: 100%; }
+  .wframe { aspect-ratio: auto; height: min(56.25vw, 34vh); }
+}
+
+.wchat { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #081a38; border-top: 1px solid var(--border); }
+.wchat-head { padding: 6px 10px; font-size: 12px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; }
+.wchat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px; font-size: 14px; color: #fff; }
+.wchat-msg { padding: 3px 0; word-break: break-word; }
+.wchat-msg .n { font-weight: 700; color: var(--accent); }
+.wchat-msg .n.home { color: #ffd166; }
+.wchat-form { display: flex; gap: 6px; padding: 8px; background: #0b2347; }
+.wchat-form input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 999px; border: 1px solid var(--border); background: #06142b; color: #fff; font-size: 15px; }
+.wchat-form button { padding: 8px 16px; border-radius: 999px; border: 0; background: var(--accent); color: #04281c; font-weight: 800; cursor: pointer; }
+.wchat-toggle { display: none; }
+.wchat-close { display: none; background: none; border: 0; color: #fff; font-size: 16px; cursor: pointer; }
+@media (max-width: 899px) {
+  .wchat { display: none; }
+  .wchat.open { display: flex; position: fixed; left: 0; right: 0; bottom: 0; height: 55vh; z-index: 80; box-shadow: 0 -6px 20px rgba(0,0,0,.5); }
+  .wchat-toggle { display: inline-block; }
+  .wchat-close { display: inline-block; }
+}
+
+.wwhere { display: inline-flex; border-radius: 999px; overflow: hidden; border: 1px solid rgba(255,255,255,.5); }
+.wwhere button { border: 0; border-radius: 0 !important; background: rgba(0,0,0,.2) !important; padding: 4px 10px; font-size: 12px; }
+.wwhere button.on { background: #fff !important; color: #d62828 !important; }
+</style>
+</head>
+<body>
+<div class="wtop">
+  <a href="index.html" id="w-exit">✕ ออกจากโหมดดู Live</a>
+  <span class="grow" id="w-title">🔴 Live</span>
+  <span class="wwhere" id="w-where" title="บอกคนอื่นว่าคุณอยู่ที่ไหน (เลือกเองได้)">
+    <button type="button" data-s="physical">📍 หน้างาน</button><button type="button" data-s="online">🏠 ทางบ้าน</button>
+  </span>
+  <a href="#" id="w-ext" target="_blank" rel="noopener noreferrer">↗ หน้าต่างแยก</a>
+</div>
+<div class="wmain">
+  <div class="wvideo">
+    <div class="wframe">
+      <iframe id="w-player" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      <div class="wend" id="w-end"><div id="w-end-msg"></div></div>
+    </div>
+    <div class="wreact" id="w-react"><div class="wreact-title">กดเพื่อส่งกำลังใจ — ทุกคนในงานจะเห็นว่าใครกดอะไร</div></div>
+    <div class="wchat" id="w-chat">
+      <div class="wchat-head"><span>💬 แชท Live — คุยกับทุกคนใน Event นี้</span><button class="wchat-close" id="w-chat-close">✕</button></div>
+      <div class="wchat-log" id="w-chat-log"></div>
+      <form class="wchat-form" id="w-chat-form">
+        <input id="w-chat-input" maxlength="200" placeholder="พิมพ์ข้อความ…" autocomplete="off" />
+        <button type="submit">ส่ง</button>
+      </form>
+    </div>
+  </div>
+  <div class="wapp"><iframe id="w-app"></iframe></div>
+</div>
+<script>window.ZG_SUPPRESS_CHAT_TOAST = true;</script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const PAGES = ['index.html', 'nextshow.html', 'musician.html', 'admin.html', 'favorites.html', 'events.html'];
+const p = new URLSearchParams(location.search).get('p');
+$('w-app').src = PAGES.includes(p) ? p : 'index.html';
+$('w-exit').href = PAGES.includes(p) && p !== 'events.html' ? p : 'index.html';
+
+const socket = io();
+function paintWhere() {
+  const cur = currentPresenceStatus();
+  document.querySelectorAll('#w-where button').forEach((b) => b.classList.toggle('on', b.dataset.s === cur));
+}
+document.querySelectorAll('#w-where button').forEach((b) => { b.onclick = () => { setPresenceStatus(b.dataset.s); paintWhere(); }; });
+window.addEventListener('storage', paintWhere); // changed from the page inside the frame
+paintWhere();
+initPresence(socket);
+
+REACTION_EMOJIS.forEach((em) => {
+  const b = document.createElement('button');
+  b.textContent = em;
+  b.onclick = () => sendReaction(em);
+  $('w-react').appendChild(b);
+});
+
+// Mobile: chat opens as a bottom sheet from a button in the reaction bar.
+const tg = document.createElement('button');
+tg.textContent = '💬 แชท'; tg.className = 'wchat-toggle';
+tg.onclick = () => $('w-chat').classList.add('open');
+$('w-react').appendChild(tg);
+$('w-chat-close').onclick = () => $('w-chat').classList.remove('open');
+
+// ---- Live chat ----
+const seenChat = new Set();
+function addChat(m) {
+  if (!m || seenChat.has(m.id) || m.eventId !== getEventId()) return;
+  seenChat.add(m.id);
+  const log = $('w-chat-log');
+  const near = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  const row = document.createElement('div');
+  row.className = 'wchat-msg';
+  const n = document.createElement('span');
+  n.className = 'n' + (m.where === 'online' ? ' home' : '');
+  n.textContent = m.name + (m.where === 'online' ? ' 🏠' : '');
+  row.append(n, document.createTextNode(': ' + m.text));
+  log.appendChild(row);
+  while (log.children.length > 150) log.removeChild(log.firstChild);
+  if (near) log.scrollTop = log.scrollHeight;
+}
+socket.on('chat-message', addChat);
+function loadChatHistory() {
+  socket.emit('chat-history', { eventId: getEventId() }, (list) => { (list || []).forEach(addChat); $('w-chat-log').scrollTop = 1e9; });
+}
+socket.on('connect', loadChatHistory);
+$('w-chat-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const inp = $('w-chat-input');
+  const t = inp.value.trim();
+  if (!t) return;
+  if (sendChat(t)) inp.value = ''; else showToast('ยังไม่ได้เชื่อมต่อ ลองใหม่อีกครั้ง');
+});
+
+let currentUrl = '';
+function showEnd(msg) { $('w-end-msg').innerHTML = msg; $('w-end').style.display = 'flex'; $('w-player').src = 'about:blank'; currentUrl = ''; }
+async function tick() {
+  const id = getEventId();
+  if (!id) { showEnd('ยังไม่ได้เลือก Event<br><br><a class="btn" href="events.html">ไปเลือก Event</a>'); return; }
+  try {
+    const r = await fetch(`/api/events/${encodeURIComponent(id)}/live`);
+    const l = r.ok ? await r.json() : { on: false };
+    const embed = l.on ? liveEmbedUrl(l.url) : null;
+    if (!l.on) { showEnd('Live จบแล้ว (หรือยังไม่เริ่ม)<br><br><a class="btn" href="index.html">กลับไปหน้า Request List</a>'); return; }
+    if (!embed) { showEnd('ลิงก์นี้ฝังในเว็บไม่ได้<br><br><a class="btn" href="' + escapeHtml(l.url) + '" target="_blank" rel="noopener noreferrer">↗ เปิดดูในหน้าต่างแยก</a>'); return; }
+    $('w-title').textContent = '🔴 Live' + (l.label ? ' — ' + l.label : '');
+    $('w-ext').href = l.url;
+    $('w-chat-input').maxLength = l.chatMaxLen || 200;
+    $('w-end').style.display = 'none';
+    if (currentUrl !== l.url) { currentUrl = l.url; $('w-player').src = embed; }
+  } catch (e) { /* offline: keep playing */ }
+}
+tick();
+setInterval(tick, 30000);
+</script>
+</body>
+</html>

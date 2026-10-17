@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Live Broadcast</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+<style>
+.live-toggle { display:flex; border-radius:14px; overflow:hidden; border:2px solid var(--border); }
+.live-toggle button { flex:1; padding:16px 10px; font-size:18px; font-weight:800; border:0; cursor:pointer; background:rgba(255,255,255,.06); color:var(--text-dim); transition:.15s; }
+.live-toggle button.active[data-on="0"] { background:#5b6b82; color:#fff; }
+.live-toggle button.active[data-on="1"] { background:#d62828; color:#fff; box-shadow:0 0 18px rgba(214,40,40,.7) inset; }
+.live-hint { margin:8px 0 4px; font-size:13px; color:var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap"><h1>Live Broadcast</h1></div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🔴 ตั้งลิงก์ดู Live ให้คนที่ดูจากทางบ้าน</span>
+    <a href="events.html" class="leave-link">← กลับ</a>
+  </div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <div id="denied" style="display:none"></div>
+    <div id="pin-box" style="display:none">
+      <p>ตั้งค่า Live Broadcast ได้โดย Admin เท่านั้น โปรดระบุ Admin PIN</p>
+      <input type="text" inputmode="numeric" id="pin-input" placeholder="ใส่ PIN" />
+      <button class="btn primary" id="pin-go" style="margin-top:8px">เข้าสู่ระบบ</button>
+    </div>
+    <div id="main" style="display:none">
+      <label>Event</label>
+      <select id="ev" style="width:100%"></select>
+      <div id="empty" style="display:none;margin-top:10px;color:var(--text-dim)">ยังไม่มี Event ในโหมดนี้</div>
+      <div id="form" style="display:none;margin-top:12px">
+        <div class="live-toggle" id="live-toggle" role="group" aria-label="สถานะ Live">
+          <button type="button" id="tg-standby" data-on="0">⏸ Stand By</button>
+          <button type="button" id="tg-live" data-on="1">🔴 Now Live</button>
+        </div>
+        <div id="tg-hint" class="live-hint"></div>
+        <input type="checkbox" id="on" style="display:none" />
+        <label style="display:block;margin-top:10px">ลิงก์ดู Live (Facebook / YouTube / Teams / อื่นๆ)</label>
+        <input type="text" id="url" placeholder="https://..." style="width:100%" />
+        <label style="display:block;margin-top:10px">ข้อความบนแถบ (ไม่บังคับ)</label>
+        <input type="text" id="label" placeholder="เช่น ดูผ่าน Facebook Live" maxlength="100" style="width:100%" />
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+          <b>💬 ตั้งค่าแชท Live (การป้องกันสแปม)</b>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px">
+            <label style="flex:1;min-width:150px">ยาวสุด (ตัวอักษร ต่อข้อความ)
+              <input type="number" id="chat-max" min="10" max="1000" step="1" value="200" style="width:100%" /></label>
+            <label style="flex:1;min-width:150px">ห่างกันอย่างน้อย (วินาที ต่อคน)
+              <input type="number" id="chat-int" min="0" max="60" step="0.5" value="1" style="width:100%" /></label>
+          </div>
+          <div style="color:var(--text-dim);font-size:12px;margin-top:4px">ค่าเริ่มต้น: 200 ตัวอักษร ต่อ 1 วินาที · ตั้งช่วงได้ 10–1000 ตัวอักษร และ 0–60 วินาที (0 = ไม่จำกัดความถี่)</div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn primary" id="save">💾 บันทึก</button>
+          <button class="btn" id="test">เปิดลิงก์ทดสอบ ↗</button>
+          <a class="btn" href="events.html" style="margin-left:auto">← กลับ</a>
+        </div>
+        <p style="color:var(--text-dim);font-size:13px;margin-top:12px">
+          เมื่อเปิด Live คนที่เข้า Event นี้จะเห็นแถบสีแดง "🔴 กำลัง Live อยู่ · กดเพื่อดู" ใต้ส่วนหัวของทุกหน้า กดแล้วเปิดลิงก์ในแท็บใหม่
+          (แถบอัปเดตเองทุก 30 วินาที) · ปิด Live เมื่อจบ แถบจะหายไป
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/client-common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const MODE = getMode();
+let pin = sessionStorage.getItem('zg_admin_pin') || '';
+let events = [];
+
+async function adminLogin(p) {
+  const res = await fetch('/api/admin/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: p, scope: MODE }),
+  });
+  return res;
+}
+async function start() {
+  if (MODE === 'zygen') {
+    const res = await adminLogin('');
+    if (res.ok) return openMain('');
+    const me = await getMyAuth();
+    $('denied').style.display = '';
+    $('denied').innerHTML = 'คุณไม่มีสิทธิ DJ Admin — กรุณาไปขอสิทธิเป็น DJ Admin กับ Super Admin' + (me && me.loggedIn ? '' : '<br>(และเข้าสู่ระบบด้วยอีเมลบริษัทก่อน)');
+    return;
+  }
+  // Any Event: PIN
+  if (pin && (await adminLogin(pin)).ok) return openMain(pin);
+  pin = ''; sessionStorage.removeItem('zg_admin_pin');
+  $('pin-box').style.display = '';
+}
+$('pin-go').onclick = async () => {
+  const p = $('pin-input').value.trim();
+  if ((await adminLogin(p)).ok) { sessionStorage.setItem('zg_admin_pin', p); $('pin-box').style.display = 'none'; openMain(p); }
+  else showToast('PIN ไม่ถูกต้อง');
+};
+async function openMain(p) {
+  pin = p;
+  $('main').style.display = '';
+  const r = await fetch('/api/events?scope=' + MODE);
+  events = (await r.json()).events || [];
+  $('ev').innerHTML = events.map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}${e.live && e.live.on ? ' 🔴' : ''}</option>`).join('');
+  const cur = getEventId();
+  if (cur && events.some((e) => e.id === cur)) $('ev').value = cur;
+  $('empty').style.display = events.length ? 'none' : '';
+  $('form').style.display = events.length ? '' : 'none';
+  fill();
+}
+function setLive(v) {
+  $('on').checked = !!v;
+  $('tg-standby').classList.toggle('active', !v);
+  $('tg-live').classList.toggle('active', !!v);
+  $('tg-hint').textContent = v ? '🔴 Now Live — ทุกคนใน Event นี้จะเห็นแถบ Live (อย่าลืมกดบันทึก)' : '⏸ Stand By — ยังไม่แสดงแถบ Live (อย่าลืมกดบันทึก)';
+}
+$('tg-standby').onclick = () => setLive(false);
+$('tg-live').onclick = () => setLive(true);
+function fill() {
+  const e = events.find((x) => x.id === $('ev').value);
+  const l = (e && e.live) || {};
+  $('chat-max').value = l.chatMaxLen || 200; $('chat-int').value = l.chatIntervalSec ?? 1;
+  setLive(!!l.on); $('url').value = l.url || ''; $('label').value = l.label || '';
+}
+$('ev').onchange = fill;
+$('test').onclick = () => {
+  const u = $('url').value.trim();
+  if (/^https?:\/\/\S+$/i.test(u)) window.open(u, '_blank', 'noopener'); else showToast('ลิงก์ไม่ถูกต้อง');
+};
+$('save').onclick = async () => {
+  const id = $('ev').value;
+  const res = await fetch(`/api/admin/events/${encodeURIComponent(id)}/live`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin, on: $('on').checked, url: $('url').value, label: $('label').value, chatMaxLen: $('chat-max').value, chatIntervalSec: $('chat-int').value }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || 'บันทึกไม่สำเร็จ'); return; }
+  const e = events.find((x) => x.id === id); if (e) e.live = data.live;
+  $('chat-max').value = data.live.chatMaxLen; $('chat-int').value = data.live.chatIntervalSec;
+  $('ev').querySelectorAll('option').forEach((o) => { const ev = events.find((x) => x.id === o.value); o.textContent = ev.name + (ev.live && ev.live.on ? ' 🔴' : ''); });
+  showToast(data.live.on ? '🔴 Now Live — บันทึกแล้ว ✓' : '⏸ Stand By — บันทึกแล้ว');
+};
+start();
+</script>
+</body>
+</html>
