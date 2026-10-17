@@ -19,7 +19,7 @@
     <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
   </div>
   <div class="info-row">
-    <span class="page-label">🎫 Event List — เลือก Event ที่จะเข้าร่วม</span>
+    <span class="page-label">🎫 Event List — เลือก Event ที่จะเข้าร่วม · <span id="mode-chip">โหมด: …</span></span>
     <div class="auth-bar" id="auth-bar"></div>
   </div>
   <nav class="tabs" id="event-nav">
@@ -161,9 +161,12 @@ function renderEvents() {
 }
 
 async function loadEvents() {
-  const res = await fetch('/api/events');
+  const res = await fetch('/api/events?scope=' + getMode());
   const data = await res.json();
   events = data.events || [];
+  // A joined event from the other mode isn't valid here — drop it so the
+  // header and nav don't show an event that isn't in this list.
+  if (getEventId() && !events.some((e) => e.id === getEventId())) { clearEvent(); renderEventHeader(); }
   renderEvents();
 }
 
@@ -172,11 +175,17 @@ async function loadEvents() {
 // admin.html uses, purely so someone who verifies here doesn't have to
 // retype it again if they then open admin.html in the same tab — but that
 // cached value is never used to skip the prompt here.) ----
-function startAdminAction(action) {
+async function startAdminAction(action) {
   pendingAction = action;
+  const me = await getMyAuth();
+  if (me && me.roles && me.roles.djadmin) { pin = ''; runPendingAction(); return; }
+  const noRole = getMode() === 'zygen';
+  document.getElementById('f-pin').style.display = noRole ? 'none' : '';
+  document.getElementById('btn-pin-submit').style.display = noRole ? 'none' : '';
   document.getElementById('f-pin').value = '';
-  document.getElementById('pin-modal-message').textContent =
-    (action && action.type === 'delete')
+  document.getElementById('pin-modal-message').textContent = noRole
+    ? 'คุณไม่มีสิทธิ DJ Admin — กรุณาไปขอสิทธิเป็น DJ Admin กับ Super Admin' + (me && me.loggedIn ? '' : ' (และเข้าสู่ระบบด้วยอีเมลบริษัทก่อน)')
+    : (action && action.type === 'delete')
       ? 'ยืนยันการลบ Event นี้ถาวร โปรดระบุ Admin PIN อีกครั้ง'
       : 'แก้ไข(หรือเพิ่ม)ได้โดย Admin เท่านั้น โปรดระบุ Admin PIN';
   document.getElementById('pin-modal-bg').style.display = 'flex';
@@ -184,7 +193,7 @@ function startAdminAction(action) {
 
 async function verifyPin(p) {
   const res = await fetch('/api/admin/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p, scope: getMode() })
   });
   return res.ok;
 }
@@ -270,6 +279,7 @@ document.getElementById('btn-event-save').addEventListener('click', async () => 
   if (!name) { showToast('กรุณาใส่ชื่อ Event'); return; }
   const body = {
     pin,
+    scope: getMode(),
     name,
     date: document.getElementById('f-date').value,
     timeFrom: document.getElementById('f-timefrom').value,
@@ -310,6 +320,7 @@ window.onLeaveEvent = renderEvents;
 
 renderEventHeader();
 renderAuthBar();
+document.getElementById('mode-chip').textContent = 'โหมด: ' + getModeLabel();
 loadEvents();
 </script>
 </body>

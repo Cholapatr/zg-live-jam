@@ -117,11 +117,11 @@ document.querySelectorAll('button[data-tool]').forEach(btn => {
 
 async function tryLogin(p) {
   const res = await fetch('/api/admin/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: p, scope: getMode(), eventId: getEventId() })
   });
   if (res.ok) {
     pin = p;
-    sessionStorage.setItem('zg_admin_pin', p);
+    if (p) sessionStorage.setItem('zg_admin_pin', p);
     document.getElementById('pin-screen').style.display = 'none';
     document.getElementById('admin-screen').style.display = '';
     loadState();
@@ -140,7 +140,7 @@ async function adminPost(url, body) {
   const res = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pin })
   });
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     sessionStorage.removeItem('zg_admin_pin');
     document.getElementById('pin-screen').style.display = '';
     document.getElementById('admin-screen').style.display = 'none';
@@ -467,7 +467,15 @@ initInbox(socket);
 
 renderEventHeader();
 renderAuthBar();
-if (requireEvent() && pin) { tryLogin(pin); }
+if (requireEvent()) {
+  getMyAuth().then((me) => {
+    if (me && me.roles && me.roles.djadmin) tryLogin('');   // DJ Admin role: no PIN needed
+    else if (getMode() === 'zygen') {
+      document.querySelector('#pin-screen .pin-box').innerHTML = '<h2>🛠 Admin</h2><div class="small-note" style="font-size:15px">คุณไม่มีสิทธิ DJ Admin — กรุณาไปขอสิทธิเป็น DJ Admin กับ Super Admin' + (me && me.loggedIn ? '' : '<br>(และเข้าสู่ระบบด้วยอีเมลบริษัทก่อน)') + '</div>';
+    }
+    else if (pin) tryLogin(pin);
+  });
+}
 </script>
 </body>
 </html>

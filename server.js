@@ -60,6 +60,7 @@ if (!db.nextShow) db.nextShow = [];
 if (!db.users) db.users = [];
 if (!db.events) db.events = [];
 if (!db.inbox) db.inbox = [];
+if (!db.roles) db.roles = {}; // employeeId -> { musician: bool, djadmin: bool }
 
 // Migration: songs created before multi-event support get grouped into one
 // auto-created "legacy" event, so no existing test data is silently lost or
@@ -95,10 +96,18 @@ function findEvent(id) {
   return db.events.find((e) => e.id === id);
 }
 
+// Events belong to one mode of the app: 'any' (Any Event) or 'zygen'
+// (ZyGen Event). Events created before modes existed have no scope and are
+// treated as ZyGen events (that's what they were all used for).
+function eventScope(e) {
+  return e && e.scope === 'any' ? 'any' : 'zygen';
+}
+
 function publicEvent(e) {
   return {
     id: e.id,
     name: e.name,
+    scope: eventScope(e),
     date: e.date || '',
     timeFrom: e.timeFrom || '',
     timeTo: e.timeTo || '',
@@ -367,7 +376,7 @@ function requireLogin(req, res, next) {
   next();
 }
 
-function findOrCreateUser({ provider, providerUserId, name, email }) {
+function findOrCreateUser({ provider, providerUserId, name, email, altEmails }) {
   let user = db.users.find((u) => u.provider === provider && u.providerUserId === providerUserId);
   if (!user) {
     user = { id: newId(), provider, providerUserId, name: name || '', email: email || '', favorites: [], createdAt: Date.now() };
@@ -377,6 +386,7 @@ function findOrCreateUser({ provider, providerUserId, name, email }) {
     if (email) user.email = email;
     if (!user.favorites) user.favorites = [];
   }
+  if (Array.isArray(altEmails) && altEmails.length) user.altEmails = altEmails;
   saveDb();
   return user;
 }
@@ -436,6 +446,12 @@ function decodeIdTokenClaims(idToken) {
 // ---------- App setup ----------
 const app = express();
 app.use(express.json());
+// Bare "/" (e.g. what the QR code links to) is the cover page where people
+// pick Any Event / ZyGen Event. Must be registered BEFORE express.static,
+// otherwise static would serve index.html (the Request List) for "/" first.
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'home.html'));
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 const server = http.createServer(app);
@@ -451,8 +467,10 @@ app.get('/api/me', (req, res) => {
   if (!user) return res.json({ loggedIn: false, providers: enabledProviderList() });
   res.json({
     loggedIn: true,
-    user: { id: user.id, name: user.name, email: user.email, provider: user.provider },
+    user: { id: user.id, name: user.name, email: user.email, altEmails: user.altEmails || [], provider: user.provider },
     favorites: user.favorites || [],
+    roles: userRoles(user),
+    employeeDisplayName: employeeDisplayNameFor(user),
     providers: enabledProviderList(),
   });
 });
@@ -531,6 +549,8 @@ app.get('/auth/:provider/callback', async (req, res) => {
         providerUserId: claims.sub || '',
         name: claims.name || claims.preferred_username || '',
         email: claims.email || claims.preferred_username || '',
+        // Entra may put the work address in any of these; roles match on all.
+        altEmails: [claims.email, claims.preferred_username, claims.upn].filter(Boolean).map((x) => String(x).toLowerCase()),
       };
     }
     if (!profile.providerUserId) throw new Error('no profile id returned');
@@ -797,7 +817,10 @@ app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
 app.get('/api/events', (req, res) => {
   // Earliest-created first, so the event list reads top-to-bottom in the
   // order the events were set up.
-  res.json({ events: [...db.events].sort((a, b) => a.createdAt - b.createdAt).map(publicEvent) });
+  // ?scope=any|zygen limits the list to that mode's events; no scope = all.
+  const scope = req.query.scope === 'any' || req.query.scope === 'zygen' ? req.query.scope : null;
+  const list = scope ? db.events.filter((e) => eventScope(e) === scope) : db.events;
+  res.json({ events: [...list].sort((a, b) => a.createdAt - b.createdAt).map(publicEvent) });
 });
 
 function readEventFields(body) {
@@ -819,7 +842,8 @@ function readEventFields(body) {
 app.post('/api/admin/events', checkPin, (req, res) => {
   const fields = readEventFields(req.body);
   if (!fields.name) return res.status(400).json({ error: 'ต้องระบุชื่อ Event' });
-  const event = { id: newId(), ...fields, createdAt: Date.now() };
+  const scope = req.body && req.body.scope === 'any' ? 'any' : 'zygen';
+  const event = { id: newId(), ...fields, scope, createdAt: Date.now() };
   db.events.push(event);
   saveDb();
   broadcast();
@@ -1067,6 +1091,10 @@ app.post('/api/songs/:id/edit', (req, res) => {
 app.post('/api/songs/:id/musician-response', (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  const songEvent = findEvent(song.eventId);
+  if (songEvent && eventScope(songEvent) === 'zygen' && !reqRoles(req).musician) {
+    return res.status(403).json({ error: 'ต้องมีสิทธิ์ นักดนตรี' });
+  }
   const { musicianName, level, role } = req.body || {};
   if (!musicianName || !String(musicianName).trim()) {
     return res.status(400).json({ error: 'ต้องระบุชื่อนักดนตรี' });
@@ -1082,18 +1110,130 @@ app.post('/api/songs/:id/musician-response', (req, res) => {
 });
 
 // ---------- Admin API (PIN protected) ----------
-function checkPin(req, res, next) {
-  const pin = (req.body && req.body.pin) || req.query.pin || req.headers['x-admin-pin'];
-  if (pin !== ADMIN_PIN) {
-    return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' });
-  }
+// ---------- Roles ----------
+// A signed-in user is matched to an employee by e-mail (case-insensitive).
+// Roles: superadmin (fixed by e-mail, can't be removed), djadmin (= may do
+// what used to need the Admin PIN), musician (may use the Musician menu).
+// Everyone else is a plain "general user". Super admin has every role plus
+// access to the Role page.
+const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || 'cholapatr@zygencenter.com').trim().toLowerCase();
+// The old PIN still works, but only for Any Event. ZyGen Event needs the
+// DJ Admin role. Set ALLOW_ADMIN_PIN=0 to make roles the only way everywhere.
+const ALLOW_ADMIN_PIN = process.env.ALLOW_ADMIN_PIN !== '0';
+
+function findEmployeeByEmail(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return null;
+  return Object.values(empStore.employees).find((x) => x.isActive && x.email && String(x.email).toLowerCase() === e) || null;
+}
+function userRoles(user) {
+  const none = { superadmin: false, djadmin: false, musician: false, general: false };
+  if (!user) return none;
+  const emails = [user.email, ...(user.altEmails || [])].map((x) => String(x || '').trim().toLowerCase()).filter(Boolean);
+  if (!emails.length) return none;
+  if (emails.includes(SUPER_ADMIN_EMAIL)) return { superadmin: true, djadmin: true, musician: true, general: true };
+  let emp = null;
+  for (const em of emails) { emp = findEmployeeByEmail(em); if (emp) break; }
+  const r = (emp && db.roles[emp.employeeId]) || {};
+  // general (ผู้ใช้ทั่วไป) is on by default; only an explicit `general:false` removes it.
+  return { superadmin: false, djadmin: !!r.djadmin, musician: !!r.musician, general: r.general !== false };
+}
+// "ชื่อเล่นไทย (ชื่อจริงไทย)" of the employee whose e-mail matches this login, or ''.
+function employeeDisplayNameFor(user) {
+  if (!user) return '';
+  const emails = [user.email, ...(user.altEmails || [])];
+  let emp = null;
+  for (const em of emails) { emp = findEmployeeByEmail(em); if (emp) break; }
+  if (!emp) return '';
+  const nick = String(emp.nicknameTh || '').trim();
+  const first = String(emp.firstNameTh || '').trim();
+  if (nick && first && nick !== first) return `${nick} (${first})`;
+  return nick || first;
+}
+function reqRoles(req) { return userRoles(getSessionUser(req)); }
+
+function requireDjAdminRole(req, res, next) {
+  if (!reqRoles(req).djadmin) return res.status(403).json({ error: 'ต้องมีสิทธิ์ DJ Admin' });
+  next();
+}
+function requireSuperAdmin(req, res, next) {
+  if (!reqRoles(req).superadmin) return res.status(403).json({ error: 'ต้องเป็น Super Admin' });
   next();
 }
 
+// Which mode does this admin request belong to? Looked up from the event
+// (or song) it targets; the event-create call and login send `scope`.
+// Unknown => treated as ZyGen (the stricter side: role required).
+function requestScope(req) {
+  const b = req.body || {};
+  const q = req.query || {};
+  const eid = b.eventId || q.eventId;
+  let ev = eid ? findEvent(eid) : null;
+  if (!ev && req.params && req.params.id) {
+    ev = findEvent(req.params.id);
+    if (!ev) { const sg = findSong(req.params.id); if (sg) ev = findEvent(sg.eventId); }
+  }
+  if (ev) return eventScope(ev);
+  if (b.scope === 'any') return 'any';
+  return 'zygen';
+}
+const NO_DJ_ADMIN = { error: 'คุณไม่มีสิทธิ DJ Admin — กรุณาไปขอสิทธิเป็น DJ Admin กับ Super Admin', noDjAdmin: true };
+
+function checkPin(req, res, next) {
+  if (reqRoles(req).djadmin) return next();
+  if (requestScope(req) === 'zygen') return res.status(403).json(NO_DJ_ADMIN);
+  // Any Event: the old PIN still works.
+  const pin = (req.body && req.body.pin) || req.query.pin || req.headers['x-admin-pin'];
+  if (ALLOW_ADMIN_PIN && pin === ADMIN_PIN) return next();
+  return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' });
+}
+
 app.post('/api/admin/login', (req, res) => {
+  if (reqRoles(req).djadmin) return res.json({ ok: true, viaRole: true });
+  if (requestScope(req) === 'zygen') return res.status(403).json(NO_DJ_ADMIN);
   const { pin } = req.body || {};
-  if (pin !== ADMIN_PIN) return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' });
+  if (!ALLOW_ADMIN_PIN || pin !== ADMIN_PIN) return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' });
   res.json({ ok: true });
+});
+
+// Role page (super admin only): every active employee + their roles.
+app.get('/api/admin/roles', requireSuperAdmin, (req, res) => {
+  const list = Object.values(empStore.employees)
+    .filter((e) => e.isActive && !e.redacted)
+    .sort((a, b) => a.employeeId.localeCompare(b.employeeId))
+    .map((e) => {
+      const r = db.roles[e.employeeId] || {};
+      const isSuper = !!e.email && String(e.email).toLowerCase() === SUPER_ADMIN_EMAIL;
+      return {
+        employeeId: e.employeeId,
+        nickname: e.nicknameTh || e.nickname || '',
+        fullName: [e.firstNameTh, e.lastNameTh].filter(Boolean).join(' ') || [e.firstName, e.lastName].filter(Boolean).join(' '),
+        email: e.email || '',
+        superadmin: isSuper,
+        general: isSuper || r.general !== false,
+        musician: isSuper || !!r.musician,
+        djadmin: isSuper || !!r.djadmin,
+      };
+    });
+  res.json({ employees: list, superAdminEmail: SUPER_ADMIN_EMAIL });
+});
+
+// Save all pending checkbox changes at once (Save button on the Role page).
+// changes: [{ employeeId, general, musician, djadmin }] — Super Admin rows are ignored.
+app.post('/api/admin/roles/save', requireSuperAdmin, (req, res) => {
+  const changes = Array.isArray(req.body && req.body.changes) ? req.body.changes : [];
+  let n = 0;
+  for (const c of changes) {
+    const emp = empStore.employees[String(c && c.employeeId)];
+    if (!emp) continue;
+    if (emp.email && String(emp.email).toLowerCase() === SUPER_ADMIN_EMAIL) continue;
+    const r = { general: c.general !== false, musician: !!c.musician, djadmin: !!c.djadmin };
+    if (r.general && !r.musician && !r.djadmin) delete db.roles[emp.employeeId];
+    else db.roles[emp.employeeId] = r;
+    n++;
+  }
+  saveDb();
+  res.json({ ok: true, saved: n });
 });
 
 // Replace the Next Show List order (array of songIds) for one event — admin
@@ -1568,6 +1708,154 @@ io.on('connection', (socket) => {
       console.error('presence disconnect cleanup error:', e);
     }
   });
+});
+
+// ---------- Employee Master Data (synced from ZG SAP Sync Hub) ----------
+// Read-only copy of the company's employee list, pulled from the Hub's
+// EMPLOYEE interface. Kept in its own file (data/employees.json) rather than
+// db.json because db.json is rewritten in full on every vote/request, and a
+// few hundred employee rows would make every one of those writes heavier.
+// Only the Hub's "employee:basic" scope fields are stored (no birth date,
+// phone, etc.) — the app only needs names/group/position/email.
+// The API key lives only in ZG_HUB_API_KEY and is only ever used here, on
+// the server — never sent to the browser.
+const EMP_FILE = path.join(__dirname, 'data', 'employees.json');
+const HUB_BASE_URL = (process.env.ZG_HUB_BASE_URL || 'https://zgsapsynchub-ffemahc2b4hha5de.southeastasia-01.azurewebsites.net').replace(/\/$/, '');
+const EMP_FIELDS = [
+  'status', 'isActive', 'firstNameTh', 'lastNameTh', 'nicknameTh', 'firstName', 'lastName', 'nickname',
+  'employeeGroup', 'employeeGroupName', 'positionId', 'positionDescription', 'email',
+  'sapChangedAt', 'hubUpdatedAt', 'redacted',
+];
+
+function loadEmployeeStore() {
+  try {
+    const d = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8'));
+    return { employees: d.employees || {}, sync: d.sync || {} };
+  } catch (e) {
+    return { employees: {}, sync: {} };
+  }
+}
+let empStore = loadEmployeeStore();
+function saveEmployeeStore() {
+  fs.mkdirSync(path.dirname(EMP_FILE), { recursive: true });
+  fs.writeFileSync(EMP_FILE, JSON.stringify(empStore));
+}
+
+let empSyncRunning = false;
+
+// Pulls from the Hub and upserts by employeeId. First run (or forceFull) =
+// everything incl. resigned; later runs = only rows changed since the last
+// successful sync (with a 5 minute overlap — upserts are idempotent, so the
+// overlap only costs a few repeated rows and protects against clock skew).
+// Resigned people stay in the list as inactive (never deleted), and a
+// redacted row overwrites everything personal with the nulls the Hub sends.
+// On any error the run is skipped and existing data is left untouched.
+async function syncEmployees({ forceFull = false } = {}) {
+  if (empSyncRunning) return { ok: false, error: 'กำลัง sync อยู่ รอสักครู่' };
+  const apiKey = process.env.ZG_HUB_API_KEY;
+  empStore.sync.lastAttemptAt = new Date().toISOString();
+  if (!apiKey) {
+    empStore.sync.lastError = 'ยังไม่ได้ตั้งค่า ZG_HUB_API_KEY';
+    saveEmployeeStore();
+    return { ok: false, error: empStore.sync.lastError };
+  }
+  empSyncRunning = true;
+  const startedAt = new Date();
+  try {
+    let url = `${HUB_BASE_URL}/api/v1/employees?includeResigned=true`;
+    const prev = empStore.sync.lastSuccessAt;
+    if (!forceFull && prev) {
+      url += `&updatedSince=${encodeURIComponent(new Date(new Date(prev).getTime() - 5 * 60 * 1000).toISOString())}`;
+    }
+    const res = await fetch(url, { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(60000) });
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j.error || ''; } catch (e) { /* not json */ }
+      throw new Error(`Hub ตอบกลับ ${res.status}${detail ? ' ' + detail : ''}`);
+    }
+    const body = await res.json();
+    const rows = Array.isArray(body.data) ? body.data : [];
+    const now = new Date().toISOString();
+    let upserted = 0;
+    for (const r of rows) {
+      if (!r || !r.employeeId) continue;
+      const rec = { employeeId: String(r.employeeId) };
+      for (const f of EMP_FIELDS) rec[f] = r[f] === undefined ? null : r[f];
+      rec.isActive = r.isActive !== false && r.status !== 'R';
+      rec.lastSyncedAt = now;
+      empStore.employees[rec.employeeId] = rec;
+      upserted++;
+    }
+    empStore.sync.lastSuccessAt = startedAt.toISOString();
+    empStore.sync.hubSyncedAt = body.syncedAt || null;
+    empStore.sync.lastError = '';
+    empStore.sync.lastCount = upserted;
+    empStore.sync.lastMode = (!forceFull && prev) ? 'incremental' : 'full';
+    saveEmployeeStore();
+    return { ok: true, upserted, mode: empStore.sync.lastMode };
+  } catch (e) {
+    empStore.sync.lastError = e.name === 'TimeoutError' ? 'Hub ไม่ตอบกลับภายในเวลาที่กำหนด' : (e.message || 'sync ไม่สำเร็จ');
+    saveEmployeeStore();
+    console.error('Employee sync failed:', empStore.sync.lastError);
+    return { ok: false, error: empStore.sync.lastError };
+  } finally {
+    empSyncRunning = false;
+  }
+}
+
+function bangkokParts(d = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d).reduce((o, x) => { o[x.type] = x.value; return o; }, {});
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: parseInt(p.hour, 10) };
+}
+
+// Daily job: checked every 10 minutes; runs once per Thai calendar day, any
+// time after 03:00. A failed attempt is retried no sooner than an hour later.
+function maybeRunDailyEmployeeSync() {
+  if (!process.env.ZG_HUB_API_KEY) return;
+  const nowTh = bangkokParts();
+  if (nowTh.hour < 3) return;
+  const last = empStore.sync.lastSuccessAt;
+  if (last && bangkokParts(new Date(last)).date === nowTh.date) return;
+  const lastTry = empStore.sync.lastAttemptAt;
+  if (lastTry && Date.now() - new Date(lastTry).getTime() < 60 * 60 * 1000 && empStore.sync.lastError) return;
+  syncEmployees();
+}
+setInterval(maybeRunDailyEmployeeSync, 10 * 60 * 1000);
+setTimeout(maybeRunDailyEmployeeSync, 30 * 1000);
+
+// Read-only list — Admin PIN required: this is personal data (names, email)
+// and the app otherwise lets anyone in as a guest.
+app.get('/api/admin/employees', requireDjAdminRole, (req, res) => {
+  const list = Object.values(empStore.employees)
+    .sort((a, b) => a.employeeId.localeCompare(b.employeeId))
+    .map((e) => ({
+      employeeId: e.employeeId,
+      isActive: e.isActive,
+      redacted: !!e.redacted,
+      firstNameTh: e.firstNameTh, lastNameTh: e.lastNameTh, nicknameTh: e.nicknameTh,
+      firstName: e.firstName, lastName: e.lastName, nickname: e.nickname,
+      employeeGroup: e.employeeGroup, employeeGroupName: e.employeeGroupName,
+      positionId: e.positionId, positionDescription: e.positionDescription,
+      email: e.email,
+    }));
+  res.json({
+    employees: list,
+    sync: {
+      lastSuccessAt: empStore.sync.lastSuccessAt || null,
+      lastAttemptAt: empStore.sync.lastAttemptAt || null,
+      hubSyncedAt: empStore.sync.hubSyncedAt || null,
+      lastError: empStore.sync.lastError || '',
+      lastMode: empStore.sync.lastMode || '',
+      running: empSyncRunning,
+      configured: !!process.env.ZG_HUB_API_KEY,
+    },
+  });
+});
+
+app.post('/api/admin/employees/sync', requireDjAdminRole, async (req, res) => {
+  const result = await syncEmployees({ forceFull: !!(req.body && req.body.full) });
+  res.status(result.ok ? 200 : 502).json(result);
 });
 
 server.listen(PORT, () => {

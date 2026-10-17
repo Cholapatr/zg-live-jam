@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Role</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap"><h1>Role</h1></div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🔑 กำหนดสิทธิ์การใช้งาน (Super Admin เท่านั้น)</span>
+    <a href="events.html" class="leave-link">← กลับ</a>
+  </div>
+</header>
+<div class="wrap wrap-wide">
+  <div class="card">
+    <div id="denied" style="display:none">หน้านี้ใช้ได้เฉพาะ Super Admin (กรุณาเข้าสู่ระบบด้วยอีเมลที่ได้รับสิทธิ์)</div>
+    <div id="main" style="display:none">
+      <div class="role-actionbar">
+        <button class="btn primary" id="btn-save" disabled>💾 Save</button>
+        <span id="dirty-note" style="color:var(--text-dim);font-size:13px;flex:1;text-align:center"></span>
+        <button class="btn" id="btn-cancel" disabled>Cancel</button>
+      </div>
+      <div class="emp-filters"><input id="q" placeholder="ค้นหา รหัส / ชื่อ / อีเมล" /></div>
+      <div id="count" style="color:var(--text-dim);font-size:13px;margin-bottom:6px"></div>
+      <div class="emp-table-wrap">
+        <table class="emp-table">
+          <thead><tr><th>รหัส</th><th>ชื่อเล่น (ชื่อจริง)</th><th>Super Admin</th><th><label><input type="checkbox" id="all-general" /> ผู้ใช้ทั่วไป</label></th><th><label><input type="checkbox" id="all-musician" /> นักดนตรี</label></th><th><label><input type="checkbox" id="all-djadmin" /> DJ Admin</label></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p style="color:var(--text-dim);font-size:13px;margin-top:12px">
+        ผู้ใช้ทั่วไป = ใช้เมนูทั่วไปได้ (ปิดแล้วบัญชีนี้จะเข้าใช้งานฝั่ง ZyGen Event ไม่ได้) · นักดนตรี = ใช้เมนูนักดนตรีได้ · DJ Admin = ทำสิ่งที่เดิมต้องใช้ PIN ได้โดยไม่ต้องกรอก PIN ·
+        Super Admin = สิทธิ์ทุกอย่าง + เข้าหน้า Role (ล็อกไว้ แก้ไม่ได้) · ติ๊ก/เอาติ๊กที่หัวคอลัมน์ = เลือก/ยกเลิกทั้งคอลัมน์ (เฉพาะรายชื่อที่แสดงอยู่) · การแก้ไขจะบันทึกเมื่อกด Save เท่านั้น
+      </p>
+    </div>
+  </div>
+</div>
+<script src="/client-common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const ROLES = ['general', 'musician', 'djadmin'];
+let all = [];      // draft (what the checkboxes show)
+let saved = {};    // employeeId -> saved values, to detect changes
+
+async function load() {
+  const res = await fetch('/api/admin/roles');
+  if (!res.ok) { $('main').style.display = 'none'; $('denied').style.display = ''; return; }
+  $('denied').style.display = 'none'; $('main').style.display = '';
+  all = (await res.json()).employees || [];
+  saved = {};
+  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin }; });
+  render();
+}
+const isDirtyRow = (e) => ROLES.some((r) => !e.superadmin && e[r] !== saved[e.employeeId][r]);
+function visible() {
+  const q = $('q').value.trim().toLowerCase();
+  return all.filter((e) => !q || [e.employeeId, e.nickname, e.fullName, e.email].filter(Boolean).join(' ').toLowerCase().includes(q));
+}
+function updateChrome() {
+  const n = all.filter(isDirtyRow).length;
+  $('btn-save').disabled = !n; $('btn-cancel').disabled = !n;
+  $('dirty-note').textContent = n ? `มีการแก้ไขที่ยังไม่ได้บันทึก ${n} คน` : '';
+  const vis = visible().filter((e) => !e.superadmin);
+  ROLES.forEach((r) => {
+    const cb = $('all-' + r), on = vis.filter((e) => e[r]).length;
+    cb.disabled = !vis.length;
+    cb.checked = vis.length > 0 && on === vis.length;
+    cb.indeterminate = on > 0 && on < vis.length;
+  });
+}
+function render() {
+  const list = visible();
+  $('count').textContent = `แสดง ${list.length} จาก ${all.length} คน`;
+  $('rows').innerHTML = list.slice(0, 1000).map((e) => {
+    const name = e.nickname ? `${e.nickname}${e.fullName ? ' (' + e.fullName + ')' : ''}` : (e.fullName || '—');
+    const box = (role) =>
+      `<input type="checkbox" data-id="${escapeHtml(e.employeeId)}" data-role="${role}" ${e[role] ? 'checked' : ''} ${e.superadmin ? 'disabled' : ''} />`;
+    return `<tr${isDirtyRow(e) ? ' style="background:rgba(242,133,0,.12)"' : ''}><td>${escapeHtml(e.employeeId)}</td><td>${escapeHtml(name)}</td>` +
+      `<td><input type="checkbox" ${e.superadmin ? 'checked' : ''} disabled /></td>` +
+      `<td>${box('general')}</td><td>${box('musician')}</td><td>${box('djadmin')}</td></tr>`;
+  }).join('');
+  updateChrome();
+}
+$('q').addEventListener('input', render);
+$('rows').addEventListener('change', (ev) => {
+  const t = ev.target;
+  if (!t.dataset || !t.dataset.role) return;
+  const emp = all.find((x) => x.employeeId === t.dataset.id);
+  if (emp) emp[t.dataset.role] = t.checked;
+  t.closest('tr').style.background = emp && isDirtyRow(emp) ? 'rgba(242,133,0,.12)' : '';
+  updateChrome();
+});
+ROLES.forEach((r) => $('all-' + r).addEventListener('change', (ev) => {
+  visible().filter((e) => !e.superadmin).forEach((e) => { e[r] = ev.target.checked; });
+  render();
+}));
+$('btn-cancel').onclick = () => {
+  all.forEach((e) => { if (!e.superadmin) ROLES.forEach((r) => { e[r] = saved[e.employeeId][r]; }); });
+  render();
+};
+$('btn-save').onclick = async () => {
+  const changes = all.filter(isDirtyRow).map((e) => ({ employeeId: e.employeeId, general: e.general, musician: e.musician, djadmin: e.djadmin }));
+  $('btn-save').disabled = true;
+  const res = await fetch('/api/admin/roles/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }),
+  });
+  if (!res.ok) { showToast('บันทึกไม่สำเร็จ'); updateChrome(); return; }
+  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin }; });
+  showToast('บันทึกแล้ว ✓');
+  render();
+};
+window.addEventListener('beforeunload', (e) => { if (all.some(isDirtyRow)) { e.preventDefault(); e.returnValue = ''; } });
+load();
+</script>
+</body>
+</html>

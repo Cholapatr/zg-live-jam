@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<style>
+  :root {
+    --navy: #051a3a;
+    --teal: #00c684;
+    --orange: #f28500;
+    --text: #f3f6fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Noto Sans Thai", "Sarabun", sans-serif;
+    color: var(--text);
+    background: var(--navy);
+    overflow-x: hidden;
+  }
+
+  /* ---- Background slideshow: crossfading cover images ---- */
+  .bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    background: var(--navy);
+  }
+  .bg .slide {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    opacity: 0;
+    transform: scale(1);
+    transition: opacity 1.6s ease;
+  }
+  .bg .slide.active {
+    opacity: 1;
+    animation: kenburns 9s ease-out forwards;
+  }
+  @keyframes kenburns {
+    from { transform: scale(1); }
+    to   { transform: scale(1.06); }
+  }
+  /* Navy gradient over the pictures so text and buttons stay readable */
+  .bg::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgba(5,26,58,0.80) 0%, rgba(5,26,58,0.35) 38%, rgba(5,26,58,0.55) 68%, rgba(5,26,58,0.92) 100%);
+  }
+
+  /* ---- Foreground content ---- */
+  .stage {
+    position: relative;
+    z-index: 1;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 28px 18px 26px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .brand { text-align: center; }
+  .brand img.logo { height: 38px; width: auto; opacity: 0.95; }
+  .brand h1 {
+    margin: 14px 0 6px;
+    font-size: clamp(2rem, 8vw, 3.2rem);
+    letter-spacing: 0.5px;
+    text-shadow: 0 3px 18px rgba(0,0,0,0.55);
+  }
+  .brand h1 span { color: var(--teal); }
+  .brand p {
+    margin: 0 auto;
+    max-width: 30em;
+    font-size: clamp(0.95rem, 3.4vw, 1.1rem);
+    line-height: 1.55;
+    color: #dbe5f5;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+  }
+
+  .modes {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-top: 28px;
+  }
+  @media (min-width: 620px) {
+    .modes { grid-template-columns: 1fr 1fr; }
+  }
+  .mode-card {
+    appearance: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text);
+    font: inherit;
+    padding: 18px 18px 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.22);
+    background: rgba(8, 28, 62, 0.62);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  }
+  .mode-card:hover { transform: translateY(-2px); }
+  .mode-card:active { transform: scale(0.985); }
+  .mode-card .icon { font-size: 1.9rem; line-height: 1; }
+  .mode-card h2 { margin: 8px 0 4px; font-size: 1.25rem; }
+  .mode-card .desc { font-size: 0.88rem; line-height: 1.5; color: #cdd9ee; }
+  .mode-card .go {
+    display: inline-block;
+    margin-top: 12px;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .mode-any:hover   { border-color: var(--teal);   background: rgba(0,198,132,0.16); }
+  .mode-any .go     { color: var(--teal); }
+  .mode-zygen:hover { border-color: var(--orange); background: rgba(242,133,0,0.18); }
+  .mode-zygen .go   { color: var(--orange); }
+
+  .note {
+    margin-top: 16px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #b9c8e2;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.6);
+  }
+
+  .center-block { width: 100%; display: flex; flex-direction: column; align-items: center; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bg .slide { transition: none; }
+    .bg .slide.active { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg" id="bg"></div>
+
+<main class="stage">
+  <div class="brand">
+    <img class="logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+    <h1>ZG <span>Live</span> Jam</h1>
+    <p>เสนอเพลง โหวตเพลง ขอให้เพื่อนร้อง แล้วดูคอร์ดสดๆ ได้ในที่เดียว — ให้ทุกคนมีส่วนร่วมกับดนตรีสดของงานเรา</p>
+  </div>
+
+  <div class="center-block">
+    <div class="modes">
+      <button class="mode-card mode-any" id="mode-any" type="button">
+        <div class="icon">🌍</div>
+        <h2>Any Event</h2>
+        <div class="desc">สำหรับงานหรือกลุ่มเพื่อนทั่วไป เข้าใช้งานแบบ guest ได้ทันที เลือก Event แล้วร่วมสนุกได้เลย</div>
+        <span class="go">เข้าใช้งาน →</span>
+      </button>
+      <button class="mode-card mode-zygen" id="mode-zygen" type="button">
+        <div class="icon">🏢</div>
+        <h2>ZyGen Event</h2>
+        <div class="desc">สำหรับกิจกรรมของชาว ZyGen เข้าใช้งานแบบ guest ได้เช่นกัน และจะมีฟังก์ชันเฉพาะสำหรับ ZyGen เพิ่มเติมในอนาคต</div>
+        <span class="go">เข้าใช้งาน →</span>
+      </button>
+    </div>
+    <div class="note">ไม่ต้องสมัครสมาชิกก็เข้าใช้งานได้ · ล็อกอินเพิ่มเติมได้ภายหลังเพื่อใช้ Favourite</div>
+  </div>
+
+  <div></div>
+</main>
+
+<script>
+// ---- Mode selection ----
+// Remembered per device so the rest of the app can later branch on it
+// (e.g. extra ZyGen-only features). Both modes work as guest.
+function chooseMode(mode) {
+  try { localStorage.setItem('zg_mode', mode); } catch (e) { /* private mode — fine, just not remembered */ }
+  location.href = 'events.html';
+}
+document.getElementById('mode-any').addEventListener('click', () => chooseMode('any'));
+document.getElementById('mode-zygen').addEventListener('click', () => chooseMode('zygen'));
+
+// ---- Cover slideshow ----
+// One random picture is loaded first so the page is never blank; the rest
+// are fetched quietly afterwards and then crossfade in a loop.
+const COVERS = [1,2,3,4,5,6,7,8,9,10,11,12,13,15]
+  .map(n => `/assets/cover/cover-${String(n).padStart(2, '0')}.jpg`);
+const INTERVAL_MS = 6000;
+
+(function slideshow() {
+  const bg = document.getElementById('bg');
+  const start = Math.floor(Math.random() * COVERS.length);
+  const order = COVERS.map((_, i) => COVERS[(start + i) % COVERS.length]);
+  const slides = [];
+  let current = 0;
+
+  function addSlide(url) {
+    const el = document.createElement('div');
+    el.className = 'slide';
+    el.style.backgroundImage = `url("${url}")`;
+    bg.appendChild(el);
+    slides.push(el);
+    return el;
+  }
+
+  function show(i) {
+    slides.forEach((s, idx) => s.classList.toggle('active', idx === i));
+  }
+
+  function loadImage(url) {
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+    });
+  }
+
+  (async () => {
+    // First picture: show as soon as it arrives.
+    if (await loadImage(order[0])) { addSlide(order[0]); show(0); }
+    // Remaining pictures, one at a time, so they don't compete with the page.
+    for (let i = 1; i < order.length; i++) {
+      if (await loadImage(order[i])) addSlide(order[i]);
+    }
+  })();
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  setInterval(() => {
+    if (slides.length < 2) return;
+    current = (current + 1) % slides.length;
+    show(current);
+  }, INTERVAL_MS);
+})();
+</script>
+</body>
+</html>

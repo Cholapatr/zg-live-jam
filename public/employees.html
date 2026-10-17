@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Employee Master Data</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap"><h1>Employee Master Data</h1></div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🗂 ข้อมูลพนักงาน (sync จาก ZG SAP Sync Hub)</span>
+    <a href="events.html" class="leave-link">← กลับ</a>
+  </div>
+</header>
+<div class="wrap wrap-wide">
+  <div class="card">
+    <div id="pin-box" style="display:none">ข้อมูลนี้เป็นข้อมูลส่วนบุคคล — ดูได้เฉพาะผู้ที่มีสิทธิ์ DJ Admin (กรุณาเข้าสู่ระบบด้วยอีเมลบริษัท)</div>
+    <div id="main" style="display:none">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+        <div id="sync-info" style="color:var(--text-dim);font-size:14px"></div>
+        <button class="btn primary" id="btn-sync">🔄 Sync จาก Hub</button>
+      </div>
+      <div class="emp-filters">
+        <input id="q" placeholder="ค้นหา รหัส / ชื่อ / อีเมล" />
+        <select id="grp"><option value="">ทุกกลุ่มพนักงาน</option></select>
+        <select id="st">
+          <option value="active">เฉพาะที่ยังทำงานอยู่</option>
+          <option value="inactive">ลาออก / ไม่ active</option>
+          <option value="all">ทั้งหมด</option>
+        </select>
+      </div>
+      <div id="count" style="color:var(--text-dim);font-size:13px;margin-bottom:6px"></div>
+      <div class="emp-table-wrap">
+        <table class="emp-table">
+          <thead><tr><th>รหัส</th><th>ชื่อ</th><th>ชื่อเล่น</th><th>กลุ่ม</th><th>อีเมล</th><th>สถานะ</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p style="color:var(--text-dim);font-size:13px;margin-top:12px">แก้ไขข้อมูลพนักงานที่ SAP (หน้านี้ดูได้อย่างเดียว)</p>
+    </div>
+  </div>
+</div>
+<script src="/client-common.js"></script>
+<script>
+let all = [];
+const $ = (id) => document.getElementById(id);
+const fmt = (iso) => iso ? new Date(iso).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : '—';
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json' } });
+  const data = await res.json().catch(() => ({}));
+  return { res, data };
+}
+async function load() {
+  const { res, data } = await api('/api/admin/employees');
+  if (res.status === 401 || res.status === 403) {
+    $('main').style.display = 'none'; $('pin-box').style.display = '';
+    return false;
+  }
+  $('pin-box').style.display = 'none'; $('main').style.display = '';
+  all = data.employees || [];
+  const s = data.sync || {};
+  $('sync-info').innerHTML = `Sync สำเร็จล่าสุด: <b>${fmt(s.lastSuccessAt)}</b>` +
+    (s.lastError ? `<br><span style="color:var(--danger)">⚠ รอบล่าสุดไม่สำเร็จ: ${escapeHtml(s.lastError)} (ใช้ข้อมูลเดิม)</span>` : '') +
+    (s.configured ? '' : '<br><span style="color:var(--danger)">ยังไม่ได้ตั้งค่า ZG_HUB_API_KEY</span>');
+  const groups = new Map();
+  all.forEach((e) => { if (e.employeeGroup) groups.set(e.employeeGroup, e.employeeGroupName || e.employeeGroup); });
+  const cur = $('grp').value;
+  $('grp').innerHTML = '<option value="">ทุกกลุ่มพนักงาน</option>' +
+    [...groups].sort().map(([k, v]) => `<option value="${escapeHtml(k)}">${escapeHtml(k)} — ${escapeHtml(v)}</option>`).join('');
+  $('grp').value = cur;
+  render();
+  return true;
+}
+function render() {
+  const q = $('q').value.trim().toLowerCase(), g = $('grp').value, st = $('st').value;
+  const list = all.filter((e) => {
+    if (st === 'active' && !e.isActive) return false;
+    if (st === 'inactive' && e.isActive) return false;
+    if (g && e.employeeGroup !== g) return false;
+    if (!q) return true;
+    const hay = [e.employeeId, e.firstNameTh, e.lastNameTh, e.nicknameTh, e.firstName, e.lastName, e.nickname, e.email]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  $('count').textContent = `แสดง ${list.length} จาก ${all.length} คน`;
+  $('rows').innerHTML = list.slice(0, 1000).map((e) => {
+    const name = e.redacted ? `พนักงานที่ลาออก (รหัส ${e.employeeId})`
+      : ([e.firstNameTh, e.lastNameTh].filter(Boolean).join(' ') || [e.firstName, e.lastName].filter(Boolean).join(' ') || '—');
+    const c = (v) => escapeHtml(v || '—');
+    return `<tr class="${e.isActive ? '' : 'inactive'}"><td>${c(e.employeeId)}</td><td>${escapeHtml(name)}</td>` +
+      `<td>${c(e.nicknameTh || e.nickname)}</td><td>${c(e.employeeGroupName || e.employeeGroup)}</td>` +
+      `<td>${c(e.email)}</td>` +
+      `<td><span class="emp-badge ${e.isActive ? 'on' : 'off'}">${e.isActive ? 'Active' : 'ลาออก'}</span></td></tr>`;
+  }).join('');
+}
+['q', 'grp', 'st'].forEach((id) => $(id).addEventListener('input', render));
+$('btn-sync').onclick = async () => {
+  $('btn-sync').disabled = true; $('btn-sync').textContent = 'กำลัง sync…';
+  const { data } = await api('/api/admin/employees/sync', { method: 'POST', body: '{}' });
+  showToast(data.ok ? `Sync สำเร็จ (${data.upserted} รายการ)` : `Sync ไม่สำเร็จ: ${data.error || ''}`);
+  $('btn-sync').disabled = false; $('btn-sync').textContent = '🔄 Sync จาก Hub';
+  load();
+};
+load().then((ok) => { if (!ok) $('pin-box').style.display = ''; });
+</script>
+</body>
+</html>

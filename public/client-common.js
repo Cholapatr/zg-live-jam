@@ -76,6 +76,8 @@ async function confirmGuestNameForJoin() {
     const res = await fetch('/api/me');
     const data = await res.json();
     if (data.loggedIn && data.user && data.user.name) suggested = data.user.name;
+    // ZyGen Event: prefer the Thai nickname (first name) from Employee Master Data.
+    if (getMode() === 'zygen' && data.loggedIn && data.employeeDisplayName) suggested = data.employeeDisplayName;
   } catch (e) { /* not logged in / offline — fall back to existing device name */ }
   const typed = prompt('ชื่อของคุณ (ให้คนอื่นใน event นี้รู้จักคุณ)', suggested || '');
   if (typed !== null && typed.trim()) setGuestName(typed);
@@ -570,16 +572,108 @@ async function markInboxRead() {
 }
 
 // True on any page that only makes sense within a joined event (Request
-// List, Next Show List, นักดนตรี, Admin). The server serves index.html for
-// both "/index.html" AND the bare "/" root (e.g. the QR code links to just
-// "/"), but the browser keeps location.pathname as "/" in that case — so a
-// plain .endsWith('index.html') check silently misses it. Handle "/"
-// explicitly instead of relying on the filename showing up in the path.
+// List, Next Show List, นักดนตรี, Admin). The bare "/" root is now the cover
+// page (home.html, where people pick Any Event / ZyGen Event), which needs
+// no event — so only the explicit filenames count here.
 function pageRequiresEvent() {
   const p = location.pathname;
-  if (p === '/') return true;
   return ['index.html', 'nextshow.html', 'musician.html', 'admin.html'].some((name) => p.endsWith(name));
 }
+
+// ---- Mode chosen on the cover page (home.html) ----
+// 'any' = Any Event, 'zygen' = ZyGen Event. Both work as guest; this is just
+// remembered per device so ZyGen-only features can branch on it later.
+function getMode() {
+  const m = localStorage.getItem('zg_mode');
+  return m === 'zygen' ? 'zygen' : 'any';
+}
+function getModeLabel() {
+  return getMode() === 'zygen' ? 'ZyGen Event' : 'Any Event';
+}
+
+// ---- Page chrome shared by every inner page: mode theme + Home button ----
+// ZyGen Event mode shows one of the cover pictures as the page background
+// and as a banner behind the header (one picture per browser session, so it
+// doesn't change from page to page). Any Event mode keeps the original plain
+// navy look. Every inner page also gets a "🏠 Home" pill next to the logo to
+// go back out to the cover page (home.html, served at "/").
+const ZY_COVERS = [1,2,3,4,5,6,7,8,9,10,11,12,13,15]
+  .map((n) => `/assets/cover/cover-${String(n).padStart(2, '0')}.jpg`);
+
+// Who am I (login + roles)? One /api/me call per page, shared by callers.
+let _myAuthPromise = null;
+function getMyAuth() {
+  if (!_myAuthPromise) {
+    _myAuthPromise = fetch('/api/me').then((r) => r.json()).catch(() => ({ loggedIn: false, roles: {} }));
+  }
+  return _myAuthPromise;
+}
+
+function initPageChrome() {
+  if (!document.body) return;
+  if (getMode() === 'zygen' && !document.body.classList.contains('theme-zygen')) {
+    // Background changes every 15 minutes. The slot comes from the clock, so
+    // every page (and every device) shows the same picture at the same time.
+    const slotIdx = () => Math.floor(Date.now() / (15 * 60 * 1000)) % ZY_COVERS.length;
+    const applyCover = () => document.body.style.setProperty('--zy-cover', `url("${ZY_COVERS[slotIdx()]}")`);
+    document.body.classList.add('theme-zygen');
+    applyCover();
+    let shown = slotIdx();
+    setInterval(() => { if (slotIdx() !== shown) { shown = slotIdx(); applyCover(); } }, 30 * 1000);
+    const bg = document.createElement('div');
+    bg.className = 'zy-bg';
+    document.body.insertBefore(bg, document.body.firstChild);
+  }
+  const row = document.querySelector('header.top .brand-row');
+  if (row && !row.querySelector('.home-link')) {
+    const a = document.createElement('a');
+    a.href = '/';
+    a.className = 'home-link';
+    a.title = 'ออกไปหน้าแรก (เลือกโหมดใหม่)';
+    a.textContent = '🚪 Exit';
+    const logo = row.querySelector('img.brand-logo');
+    row.insertBefore(a, logo || null);
+  }
+  // ZyGen mode: an account whose "ผู้ใช้ทั่วไป" role was switched off in the Role
+  // page gets a notice instead of the app (Super Admin is never blocked).
+  if (getMode() === 'zygen') {
+    getMyAuth().then((me) => {
+      if (me && me.loggedIn && me.roles && me.roles.general === false) {
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,15,35,.95);display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:#fff';
+        ov.innerHTML = '<div class="card" style="max-width:420px">บัญชีนี้ไม่มีสิทธิ์ใช้งานทั่วไปของ ZyGen Event<br><small style="color:var(--text-dim)">กรุณาติดต่อ Super Admin เพื่อขอสิทธิ์</small><br><br>' +
+          '<a class="btn" href="/auth/logout?from=/">ออกจากระบบ</a></div>';
+        document.body.appendChild(ov);
+      }
+    });
+  }
+  // ZyGen mode only: the logo opens a small hidden menu (first item: Master Data).
+  const logo = row && row.querySelector('img.brand-logo');
+  if (logo && getMode() === 'zygen' && !logo.dataset.menu) {
+    logo.dataset.menu = '1';
+    const wrap = document.createElement('div');
+    wrap.className = 'logo-menu-wrap';
+    logo.parentNode.insertBefore(wrap, logo);
+    wrap.appendChild(logo);
+    logo.style.cursor = 'pointer';
+    const menu = document.createElement('div');
+    menu.className = 'logo-menu';
+    menu.innerHTML = '<a href="events.html">🏠 Home</a>';
+    getMyAuth().then((me) => {
+      const r = (me && me.roles) || {};
+      if (r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="employees.html">🗂 Master Data</a>');
+      if (r.superadmin) menu.insertAdjacentHTML('beforeend', '<a href="role.html">🔑 Role</a>');
+      menu.insertAdjacentHTML('beforeend', '<div class="logo-menu-who">' + (me && me.loggedIn
+        ? 'ล็อกอิน: ' + escapeHtml([me.user.email].concat(me.user.altEmails || []).filter((v, i, a) => v && a.indexOf(v) === i).join(', ') || '(ไม่มีอีเมล)')
+        : 'ยังไม่ได้ล็อกอิน') + '</div>');
+    });
+    wrap.appendChild(menu);
+    logo.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+    document.addEventListener('click', () => menu.classList.remove('open'));
+  }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPageChrome);
+else initPageChrome();
 
 // Clears the joined event. Pages that require one (Request List, Next Show
 // List, นักดนตรี, Admin) send the person back to events.html; pages that

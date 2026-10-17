@@ -193,6 +193,14 @@ function render() {
 async function loadState() {
   const eventId = getEventId();
   if (!eventId) return; // requireEvent() below is already redirecting to events.html
+  if (getMode() === 'zygen') {
+    const me = await getMyAuth();
+    if (!(me && me.roles && me.roles.musician)) {
+      document.querySelector('.wrap').innerHTML = '<div class="card" style="text-align:center">เมนูนักดนตรีใช้ได้เฉพาะผู้ที่ได้รับสิทธิ์ "นักดนตรี"<br><small style="color:var(--text-dim)">' +
+        (me && me.loggedIn ? 'บัญชีนี้ยังไม่มีสิทธิ์ — ติดต่อ Super Admin' : 'กรุณาเข้าสู่ระบบด้วยอีเมลบริษัทก่อน') + '</small></div>';
+      return;
+    }
+  }
   const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
   if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
   state = await res.json();

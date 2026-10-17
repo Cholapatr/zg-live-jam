@@ -916,3 +916,66 @@ button.btn-fav-request {
   font-weight: 600;
   border: none;
 }
+
+
+/* ---- Home pill (every inner page) ---- */
+.home-link {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* ---- ZyGen Event theme: cover picture as background + header banner ----
+   Added only when the cover page mode is "ZyGen Event" (body.theme-zygen);
+   Any Event mode keeps the original plain navy look untouched. */
+.zy-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(180deg, rgba(5, 26, 58, 0.82) 0%, rgba(5, 26, 58, 0.70) 45%, rgba(5, 26, 58, 0.90) 100%),
+    var(--zy-cover) center / cover no-repeat;
+}
+body.theme-zygen { background: #051a3a; }
+body.theme-zygen header.top {
+  background:
+    linear-gradient(180deg, rgba(2, 29, 68, 0.72), rgba(2, 29, 68, 0.90)),
+    var(--zy-cover) center 30% / cover no-repeat;
+  border-bottom-color: rgba(0, 198, 132, 0.55);
+}
+body.theme-zygen .card {
+  background: rgba(8, 28, 62, 0.74);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+body.theme-zygen .home-link { border-color: rgba(242, 133, 0, 0.7); color: #ffd9a8; }
+
+/* ZyGen logo dropdown menu */
+.logo-menu-wrap { position: relative; display: inline-block; }
+.logo-menu { display: none; position: absolute; right: 0; top: 100%; margin-top: 6px; min-width: 160px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.4); z-index: 60; overflow: hidden; }
+.logo-menu.open { display: block; }
+.logo-menu a { display: block; padding: 10px 14px; color: var(--text, #fff); text-decoration: none; white-space: nowrap; }
+.logo-menu a:hover { background: rgba(255,255,255,.08); }
+.emp-table-wrap { overflow-x: auto; }
+.emp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.emp-table th, .emp-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.emp-table th { color: var(--text-dim); font-weight: 600; }
+.emp-table tr.inactive td { opacity: .6; }
+.emp-badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+.emp-badge.on { background: rgba(0,198,132,.2); color: var(--accent); }
+.emp-badge.off { background: rgba(255,92,92,.2); color: var(--danger); }
+.emp-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.emp-filters input, .emp-filters select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: inherit; }
+/* Wide pages (Master Data): use the full screen on desktop/tablet */
+@media (min-width: 700px) { .wrap.wrap-wide { max-width: 60vw; padding: 16px 24px; } }
+
+.logo-menu-who { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); max-width: 240px; white-space: normal; word-break: break-all; }
+
+.role-actionbar { display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5; padding:8px 0; background:var(--bg-card); }
+.emp-table th label { cursor:pointer; display:inline-flex; gap:6px; align-items:center; }
