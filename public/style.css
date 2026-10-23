@@ -1086,3 +1086,8 @@ body.is-history .card.played .grow { opacity: .6; }
 }
 
 .btn-song-edit { flex-shrink: 0; align-self: flex-start; padding: 6px 10px; }
+
+input.played-sel { width: 22px; height: 22px; flex-shrink: 0; align-self: flex-start; margin: 8px 4px 0; accent-color: #2f7df6; cursor: pointer; }
+.sel-all-label { display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; }
+.sel-all-label input { width: 22px; height: 22px; accent-color: #2f7df6; }
+.card.played-head { padding-top: 10px; padding-bottom: 10px; }

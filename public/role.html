@@ -35,7 +35,7 @@
       <div id="count" style="color:var(--text-dim);font-size:13px;margin-bottom:6px"></div>
       <div class="emp-table-wrap">
         <table class="emp-table">
-          <thead><tr><th>รหัส</th><th>ชื่อเล่น (ชื่อจริง)</th><th>Super Admin</th><th><label><input type="checkbox" id="all-general" /> ผู้ใช้ทั่วไป</label></th><th><label><input type="checkbox" id="all-musician" /> นักดนตรี</label></th><th><label><input type="checkbox" id="all-djadmin" /> DJ Admin</label></th></tr></thead>
+          <thead><tr><th>รหัส</th><th>ชื่อเล่น (ชื่อจริง)</th><th>Super Admin</th><th><label><input type="checkbox" id="all-general" /> ผู้ใช้ทั่วไป</label></th><th><label><input type="checkbox" id="all-musician" /> นักดนตรี</label></th><th><label><input type="checkbox" id="all-djadmin" /> DJ Admin</label></th><th><label><input type="checkbox" id="all-spotifygen" /> Spotify Gen.</label></th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -49,7 +49,7 @@
 <script src="/client-common.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const ROLES = ['general', 'musician', 'djadmin'];
+const ROLES = ['general', 'musician', 'djadmin', 'spotifygen'];
 let all = [];      // draft (what the checkboxes show)
 let saved = {};    // employeeId -> saved values, to detect changes
 
@@ -59,7 +59,7 @@ async function load() {
   $('denied').style.display = 'none'; $('main').style.display = '';
   all = (await res.json()).employees || [];
   saved = {};
-  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin }; });
+  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin, spotifygen: e.spotifygen }; });
   render();
 }
 const isDirtyRow = (e) => ROLES.some((r) => !e.superadmin && e[r] !== saved[e.employeeId][r]);
@@ -88,7 +88,7 @@ function render() {
       `<input type="checkbox" data-id="${escapeHtml(e.employeeId)}" data-role="${role}" ${e[role] ? 'checked' : ''} ${e.superadmin ? 'disabled' : ''} />`;
     return `<tr${isDirtyRow(e) ? ' style="background:rgba(242,133,0,.12)"' : ''}><td>${escapeHtml(e.employeeId)}</td><td>${escapeHtml(name)}</td>` +
       `<td><input type="checkbox" ${e.superadmin ? 'checked' : ''} disabled /></td>` +
-      `<td>${box('general')}</td><td>${box('musician')}</td><td>${box('djadmin')}</td></tr>`;
+      `<td>${box('general')}</td><td>${box('musician')}</td><td>${box('djadmin')}</td><td>${box('spotifygen')}</td></tr>`;
   }).join('');
   updateChrome();
 }
@@ -110,13 +110,13 @@ $('btn-cancel').onclick = () => {
   render();
 };
 $('btn-save').onclick = async () => {
-  const changes = all.filter(isDirtyRow).map((e) => ({ employeeId: e.employeeId, general: e.general, musician: e.musician, djadmin: e.djadmin }));
+  const changes = all.filter(isDirtyRow).map((e) => ({ employeeId: e.employeeId, general: e.general, musician: e.musician, djadmin: e.djadmin, spotifygen: e.spotifygen }));
   $('btn-save').disabled = true;
   const res = await fetch('/api/admin/roles/save', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }),
   });
   if (!res.ok) { showToast('บันทึกไม่สำเร็จ'); updateChrome(); return; }
-  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin }; });
+  all.forEach((e) => { saved[e.employeeId] = { general: e.general, musician: e.musician, djadmin: e.djadmin, spotifygen: e.spotifygen }; });
   showToast('บันทึกแล้ว ✓');
   render();
 };

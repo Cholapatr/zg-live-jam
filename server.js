@@ -575,7 +575,7 @@ async function spotifyApi(method, path, body) {
 }
 
 app.get('/auth/spotify/connect', (req, res) => {
-  if (!reqRoles(req).superadmin) return res.status(403).send('ต้องเป็น Super Admin');
+  if (!reqRoles(req).spotifygen) return res.status(403).send(SPOTIFY_NOAUTH_MSG);
   if (!spotifyConfigured()) return res.status(404).send('ยังไม่ได้ตั้งค่า SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET ใน .env');
   // The state is a signed, short-lived token (issued only to a Super Admin), so the callback
   // needs no cookie — it may arrive on another host (127.0.0.1) than the login (localhost).
@@ -603,16 +603,16 @@ app.get('/auth/spotify/callback', async (req, res) => {
   }
 });
 
-app.get('/api/spotify/status', requireDjAdminRole, (req, res) => {
+app.get('/api/spotify/status', requireLogin, (req, res) => {
   res.json({
     configured: spotifyConfigured(), connected: !!(db.spotify && db.spotify.refreshToken),
-    accountName: (db.spotify && db.spotify.userName) || '', superadmin: !!reqRoles(req).superadmin,
+    accountName: (db.spotify && db.spotify.userName) || '', canGen: !!reqRoles(req).spotifygen,
     redirectUri: SPOTIFY_REDIRECT(),
   });
 });
 
 // Every public playlist of every user (for the admin to pick from).
-app.get('/api/spotify/playlists', requireDjAdminRole, (req, res) => {
+app.get('/api/spotify/playlists', requireLogin, (req, res) => {
   const out = [];
   db.users.forEach((u) => {
     userPlaylists(u).filter((p) => p.visibility === 'public' && p.songs.length).forEach((p) => {
@@ -644,7 +644,7 @@ async function spotifySearchSong(title, artist) {
 }
 
 // Step 1: search Spotify for each song, return candidates (admin reviews them).
-app.post('/api/spotify/match', requireDjAdminRole, async (req, res) => {
+app.post('/api/spotify/match', requireSpotifyGen, async (req, res) => {
   try {
     const found = findPublicPlaylist(String((req.body || {}).uid || ''), String((req.body || {}).pid || ''));
     if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist (อาจเปลี่ยนเป็น Private แล้ว)' });
@@ -662,7 +662,7 @@ app.post('/api/spotify/match', requireDjAdminRole, async (req, res) => {
 });
 
 // Step 2: create the playlist on the shared account and attach the link.
-app.post('/api/spotify/create', requireDjAdminRole, async (req, res) => {
+app.post('/api/spotify/create', requireSpotifyGen, async (req, res) => {
   try {
     const b = req.body || {};
     const found = findPublicPlaylist(String(b.uid || ''), String(b.pid || ''));
@@ -718,7 +718,7 @@ app.get('/api/spotify-code/:id', requireLogin, async (req, res) => {
 });
 
 // Attach / replace / clear a Spotify link by hand.
-app.post('/api/spotify/attach', requireDjAdminRole, (req, res) => {
+app.post('/api/spotify/attach', requireSpotifyGen, (req, res) => {
   const b = req.body || {};
   const owner = db.users.find((u) => u.id === String(b.uid || ''));
   const raw = owner && findPlaylist(owner, String(b.pid || ''));
@@ -888,6 +888,49 @@ app.post('/api/songs/:id/playlists', requireLogin, (req, res) => {
   });
   saveDb();
   res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// Bulk versions (History events: several songs at once). Add only — never removes anything.
+function eventSongsByIds(ids) {
+  return (Array.isArray(ids) ? ids : []).map((id) => findSong(String(id))).filter(Boolean);
+}
+app.post('/api/songs/to-favourite-bulk', requireLogin, (req, res) => {
+  const songs = eventSongsByIds(req.body && req.body.songIds);
+  if (!songs.length) return res.status(400).json({ error: 'ไม่ได้เลือกเพลง' });
+  req.user.favorites = req.user.favorites || [];
+  const keys = new Set(req.user.favorites.map((f) => songKey(f.title, f.artist)));
+  let added = 0, existed = 0;
+  songs.forEach((sg) => {
+    const k = songKey(sg.title, sg.artist);
+    if (keys.has(k)) { existed++; return; }
+    req.user.favorites.push(copySongData(sg)); keys.add(k); added++;
+  });
+  saveDb();
+  res.json({ ok: true, added, existed });
+});
+app.post('/api/songs/playlists-bulk', requireLogin, (req, res) => {
+  const songs = eventSongsByIds(req.body && req.body.songIds);
+  if (!songs.length) return res.status(400).json({ error: 'ไม่ได้เลือกเพลง' });
+  const b = req.body || {};
+  req.user.playlists = req.user.playlists || [];
+  const want = new Set(Array.isArray(b.playlistIds) ? b.playlistIds : []);
+  const newName = String(b.newName || '').trim().slice(0, 60);
+  if (newName) {
+    if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
+    const np = { id: newId(), name: newName, visibility: b.visibility === 'public' ? 'public' : 'private', songs: [], spotifyUrl: '', createdAt: Date.now() };
+    req.user.playlists.push(np); want.add(np.id);
+  }
+  let added = 0;
+  req.user.playlists.filter((p) => want.has(p.id)).forEach((p) => {
+    p.songs = p.songs || [];
+    const keys = new Set(p.songs.map((x) => songKey(x.title, x.artist)));
+    songs.forEach((sg) => {
+      const k = songKey(sg.title, sg.artist);
+      if (!keys.has(k)) { p.songs.push(copySongData(sg)); keys.add(k); added++; }
+    });
+  });
+  saveDb();
+  res.json({ ok: true, added, playlists: userPlaylists(req.user) });
 });
 
 app.post('/api/favorites/:favId/edit', requireLogin, (req, res) => {
@@ -1656,16 +1699,16 @@ function findEmployeeByEmail(email) {
   return Object.values(empStore.employees).find((x) => x.isActive && x.email && String(x.email).toLowerCase() === e) || null;
 }
 function userRoles(user) {
-  const none = { superadmin: false, djadmin: false, musician: false, general: false };
+  const none = { superadmin: false, djadmin: false, musician: false, general: false, spotifygen: false };
   if (!user) return none;
   const emails = [user.email, ...(user.altEmails || [])].map((x) => String(x || '').trim().toLowerCase()).filter(Boolean);
   if (!emails.length) return none;
-  if (emails.includes(SUPER_ADMIN_EMAIL)) return { superadmin: true, djadmin: true, musician: true, general: true };
+  if (emails.includes(SUPER_ADMIN_EMAIL)) return { superadmin: true, djadmin: true, musician: true, general: true, spotifygen: true };
   let emp = null;
   for (const em of emails) { emp = findEmployeeByEmail(em); if (emp) break; }
   const r = (emp && db.roles[emp.employeeId]) || {};
   // general (ผู้ใช้ทั่วไป) is on by default; only an explicit `general:false` removes it.
-  return { superadmin: false, djadmin: !!r.djadmin, musician: !!r.musician, general: r.general !== false };
+  return { superadmin: false, djadmin: !!r.djadmin, musician: !!r.musician, general: r.general !== false, spotifygen: !!r.spotifygen };
 }
 // "ชื่อเล่นไทย (ชื่อจริงไทย)" of the employee whose e-mail matches this login, or ''.
 function employeeDisplayNameFor(user) {
@@ -1720,6 +1763,11 @@ function migratePlaylists() {
 
 function reqRoles(req) { return userRoles(getSessionUser(req)); }
 
+const SPOTIFY_NOAUTH_MSG = 'คุณไม่มี Authorize ในการ Generate Spotify Playlist กรุณาติดต่อแอดมิน';
+function requireSpotifyGen(req, res, next) {
+  if (!reqRoles(req).spotifygen) return res.status(403).json({ error: SPOTIFY_NOAUTH_MSG, noAuth: true });
+  next();
+}
 function requireDjAdminRole(req, res, next) {
   if (!reqRoles(req).djadmin) return res.status(403).json({ error: 'ต้องมีสิทธิ์ DJ Admin' });
   next();
@@ -1782,13 +1830,14 @@ app.get('/api/admin/roles', requireSuperAdmin, (req, res) => {
         general: isSuper || r.general !== false,
         musician: isSuper || !!r.musician,
         djadmin: isSuper || !!r.djadmin,
+        spotifygen: isSuper || !!r.spotifygen,
       };
     });
   res.json({ employees: list, superAdminEmail: SUPER_ADMIN_EMAIL });
 });
 
 // Save all pending checkbox changes at once (Save button on the Role page).
-// changes: [{ employeeId, general, musician, djadmin }] — Super Admin rows are ignored.
+// changes: [{ employeeId, general, musician, djadmin, spotifygen }] — Super Admin rows are ignored.
 app.post('/api/admin/roles/save', requireSuperAdmin, (req, res) => {
   const changes = Array.isArray(req.body && req.body.changes) ? req.body.changes : [];
   let n = 0;
@@ -1796,8 +1845,8 @@ app.post('/api/admin/roles/save', requireSuperAdmin, (req, res) => {
     const emp = empStore.employees[String(c && c.employeeId)];
     if (!emp) continue;
     if (emp.email && String(emp.email).toLowerCase() === SUPER_ADMIN_EMAIL) continue;
-    const r = { general: c.general !== false, musician: !!c.musician, djadmin: !!c.djadmin };
-    if (r.general && !r.musician && !r.djadmin) delete db.roles[emp.employeeId];
+    const r = { general: c.general !== false, musician: !!c.musician, djadmin: !!c.djadmin, spotifygen: !!c.spotifygen };
+    if (r.general && !r.musician && !r.djadmin && !r.spotifygen) delete db.roles[emp.employeeId];
     else db.roles[emp.employeeId] = r;
     n++;
   }

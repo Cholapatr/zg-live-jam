@@ -411,6 +411,7 @@ function render() {
 
 // Read-only list of songs already marked "เล่นแล้ว" by admin for this event —
 // shown below the live queue so guests can see what's already been played.
+const playedSel = new Set(); // History: ticked songs in "Already played"
 function renderPlayedShow() {
   const el = document.getElementById('played-show-list');
   if (!el) return;
@@ -419,7 +420,20 @@ function renderPlayedShow() {
     el.innerHTML = '<div class="empty">ยังไม่มีเพลงที่เล่นแล้ว</div>';
     return;
   }
-  el.innerHTML = list.map((item) => {
+  const hist = getEventStatus() === 'history';
+  const ids = list.map(i => i.song.id);
+  [...playedSel].forEach(id => { if (!ids.includes(id)) playedSel.delete(id); });
+  const header = hist ? `
+    <div class="card played-head">
+      <div class="row-flex" style="align-items:center;">
+        <label class="grow sel-all-label"><input type="checkbox" id="played-sel-all" ${playedSel.size === ids.length ? 'checked' : ''} /> เลือกทั้งหมด <span class="small-note">(เลือกแล้ว ${playedSel.size}/${ids.length})</span></label>
+        <span class="hist-actions">
+          <button type="button" class="hist-fav" id="played-bulk-fav">⭐ <span class="hl">Add to </span>Favourite</button>
+          <button type="button" class="hist-pl" id="played-bulk-pl">📁 <span class="hl">Add to </span>Playlist</button>
+        </span>
+      </div>
+    </div>` : '';
+  el.innerHTML = header + list.map((item) => {
     const s = item.song;
     return `
     <div class="card played">
@@ -430,11 +444,31 @@ function renderPlayedShow() {
           <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
         ${songEditBtnHtml(s)}
+        ${hist ? `<input type="checkbox" class="played-sel" data-sel="${s.id}" ${playedSel.has(s.id) ? 'checked' : ''} />` : ''}
         ${historySongActionsHtml(s.id)}
       </div>
       ${isOpenMode() ? `<div class="btn-row" style="margin-top:8px;"><button data-undo="${s.id}">↩ ยังไม่เล่น</button></div>` : ''}
     </div>`;
   }).join('');
+  if (hist) {
+    const refreshHead = () => {
+      const all = document.getElementById('played-sel-all');
+      all.checked = playedSel.size === ids.length;
+      all.parentNode.querySelector('.small-note').textContent = `(เลือกแล้ว ${playedSel.size}/${ids.length})`;
+    };
+    el.querySelectorAll('input.played-sel').forEach(cb => cb.addEventListener('change', () => {
+      if (cb.checked) playedSel.add(cb.dataset.sel); else playedSel.delete(cb.dataset.sel);
+      refreshHead();
+    }));
+    document.getElementById('played-sel-all').addEventListener('change', (e) => {
+      if (e.target.checked) ids.forEach(id => playedSel.add(id)); else playedSel.clear();
+      el.querySelectorAll('input.played-sel').forEach(cb => { cb.checked = playedSel.has(cb.dataset.sel); });
+      refreshHead();
+    });
+    const pick = () => { const sel = ids.filter(id => playedSel.has(id)); if (!sel.length) showToast('ยังไม่ได้ติ๊กเลือกเพลง'); return sel; };
+    document.getElementById('played-bulk-fav').addEventListener('click', () => { const sel = pick(); if (sel.length) histAddFavouriteBulk(sel); });
+    document.getElementById('played-bulk-pl').addEventListener('click', () => { const sel = pick(); if (sel.length) histOpenPlaylistModal(sel); });
+  }
   el.querySelectorAll('button[data-undo]').forEach(b => b.addEventListener('click', async () => {
     await queuePost('/api/admin/next-show/played', { songId: b.dataset.undo, played: false });
     showToast('ย้ายกลับเข้าคิวแล้ว');

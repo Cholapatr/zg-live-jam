@@ -31,7 +31,7 @@
   </div>
 </header>
 <div class="wrap wrap-wide">
-  <div class="card" id="denied" style="display:none">หน้านี้ใช้ได้เฉพาะผู้ที่มีสิทธิ์ DJ Admin (กรุณาเข้าสู่ระบบด้วยอีเมลบริษัท)</div>
+  <div class="card" id="denied" style="display:none">กรุณาเข้าสู่ระบบก่อนจึงจะดู Spotify Playlist ได้</div>
   <div id="main" style="display:none">
     <div class="card" id="conn"></div>
     <div class="card" id="list-card"><h3>Public Playlist ที่มีคนเปิดไว้</h3><div id="list"></div></div>
@@ -66,10 +66,10 @@ function renderConn() {
     h += `<div class="small-note">ยังไม่ได้ตั้งค่า — ใส่ <b>SPOTIFY_CLIENT_ID</b> และ <b>SPOTIFY_CLIENT_SECRET</b> ใน .env แล้ว restart server<br>Redirect URI ที่ต้องตั้งใน Spotify Dashboard: <code>${escapeHtml(s.redirectUri)}</code></div>`;
   } else if (!s.connected) {
     h += '<div class="small-note">ยังไม่ได้เชื่อมต่อบัญชี Spotify (ต้องเป็น Premium)</div>' +
-      (s.superadmin ? '<div style="margin-top:8px;"><a class="btn-spotify" style="display:inline-block;padding:8px 14px;border-radius:8px;text-decoration:none;" href="/auth/spotify/connect">Connect Spotify</a></div>' : '<div class="small-note">ให้ Super Admin เป็นผู้กด Connect</div>');
+      (s.canGen ? '<div style="margin-top:8px;"><a class="btn-spotify" style="display:inline-block;padding:8px 14px;border-radius:8px;text-decoration:none;" href="/auth/spotify/connect">Connect Spotify</a></div>' : '<div class="small-note">ให้ผู้ที่มีสิทธิ์ Spotify Gen. เป็นผู้กด Connect</div>');
   } else {
     h += `<div>✅ เชื่อมต่อแล้ว: <b>${escapeHtml(s.accountName || 'Spotify')}</b></div>` +
-      (s.superadmin ? '<div style="margin-top:6px;"><a class="link-out" style="margin-top:0;" href="/auth/spotify/connect">เชื่อมต่อใหม่ / เปลี่ยนบัญชี</a></div>' : '');
+      (s.canGen ? '<div style="margin-top:6px;"><a class="link-out" style="margin-top:0;" href="/auth/spotify/connect">เชื่อมต่อใหม่ / เปลี่ยนบัญชี</a></div>' : '');
   }
   $('conn').innerHTML = h;
 }
@@ -82,24 +82,27 @@ async function loadList() {
       <div class="grow"><b>${escapeHtml(p.name)}</b> <span class="small-note">(${p.songCount} เพลง) · ของ ${escapeHtml(p.ownerName)}</span>
         ${p.spotifyUrl ? `<div><a class="link-out" style="margin-top:0;" href="${escapeHtml(p.spotifyUrl)}" target="_blank" rel="noopener">🎧 เปิด Spotify Playlist</a> · <a class="link-out" style="margin-top:0;" href="/api/spotify-code/${(p.spotifyUrl.match(/playlist\/([A-Za-z0-9]{22})/)||[])[1]}?dl=1" download>⬇ Spotify Code</a></div>` : ''}
       </div>
-      <button class="btn-spotify" data-gen="${i}" ${status.connected ? '' : 'disabled'}>${p.spotifyUrl ? '🔄 สร้างใหม่' : '🎧 สร้าง'}</button>
+      <button class="btn-spotify" data-gen="${i}" ${(status.connected || !status.canGen) ? '' : 'disabled'}>${p.spotifyUrl ? '🔄 สร้างใหม่' : '🎧 สร้าง'}</button>
       <button data-link="${i}">🔗 แปะลิงก์เอง</button>
     </div>`).join('') : '<div class="small-note">ยังไม่มีใครตั้ง Playlist เป็น Public</div>';
   $('list').querySelectorAll('button[data-gen]').forEach(b => b.addEventListener('click', () => generate(pls[b.dataset.gen])));
   $('list').querySelectorAll('button[data-link]').forEach(b => b.addEventListener('click', async () => {
     const p = pls[b.dataset.link];
+    if (!status.canGen) { alert(NOAUTH_MSG); return; }
     const url = prompt('วางลิงก์ Spotify Playlist (เว้นว่างเพื่อลบลิงก์)', p.spotifyUrl || '');
     if (url === null) return;
     const r2 = await api('/api/spotify/attach', { uid: p.uid, pid: p.pid, url });
-    if (!r2.ok) return showToast(r2.data.error || 'บันทึกไม่ได้');
+    if (!r2.ok) { if (r2.data && r2.data.noAuth) alert(r2.data.error); else showToast(r2.data.error || 'บันทึกไม่ได้'); return; }
     showToast('บันทึกแล้ว'); loadList();
   }));
 }
 
+const NOAUTH_MSG = 'คุณไม่มี Authorize ในการ Generate Spotify Playlist กรุณาติดต่อแอดมิน';
 async function generate(p) {
+  if (!status.canGen) { alert(NOAUTH_MSG); return; }
   showToast('กำลังค้นหาเพลงบน Spotify…');
   const r = await api('/api/spotify/match', { uid: p.uid, pid: p.pid });
-  if (!r.ok) return showToast(r.data.error || 'ค้นหาไม่ได้');
+  if (!r.ok) { if (r.data && r.data.noAuth) alert(r.data.error); else showToast(r.data.error || 'ค้นหาไม่ได้'); return; }
   cur = p; matched = r.data;
   $('p-title').textContent = '🎧 ' + p.name;
   const found = matched.items.filter(i => i.candidates.length).length;
@@ -122,7 +125,7 @@ $('p-create').addEventListener('click', async () => {
   const btn = $('p-create'); btn.disabled = true; btn.textContent = 'กำลังสร้าง…';
   const r = await api('/api/spotify/create', { uid: cur.uid, pid: cur.pid, name: $('p-name').value, uris });
   btn.disabled = false; btn.textContent = '🎧 สร้างบน Spotify';
-  if (!r.ok) return showToast(r.data.error || 'สร้างไม่ได้');
+  if (!r.ok) { if (r.data && r.data.noAuth) alert(r.data.error); else showToast(r.data.error || 'สร้างไม่ได้'); return; }
   showToast(`สร้างแล้ว (${r.data.added} เพลง) และแนบลิงก์ให้ Public Playlist แล้ว`);
   $('prev-card').style.display = 'none'; loadList();
 });
