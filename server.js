@@ -118,7 +118,7 @@ function eventMode(e) { return e && e.mode === 'open' ? 'open' : 'approve'; }
 // 'open' (default) = a live / upcoming event people take part in;
 // 'history' = finished event kept for looking back (nothing can be added).
 function eventStatus(e) { return e && e.status === 'history' ? 'history' : 'open'; }
-const HISTORY_MSG = 'Event นี้เป็นประวัติ (History) ดูย้อนหลังได้อย่างเดียว ไม่สามารถเพิ่มหรือแก้ไขเพลงได้';
+const HISTORY_MSG = 'Event นี้เป็นประวัติ (History) ดูย้อนหลังได้ ไม่สามารถเพิ่มหรือโหวตเพลงได้';
 // For public song routes /api/songs/:id/… — refuse when the song's event is history.
 function blockHistorySong(req, res, next) {
   const sg = findSong(req.params.id);
@@ -1568,7 +1568,8 @@ app.post('/api/songs/:id/self-delete', blockHistorySong, (req, res) => {
 // Guests can fix a typo/mistake in their own request (title/artist/chord),
 // but once admin has verified ("ตรวจสอบแล้ว") the entry it's locked — only
 // admin can change it from that point on.
-app.post('/api/songs/:id/edit', blockHistorySong, (req, res) => {
+// (Editing stays allowed on History events so typos in old records can still be fixed.)
+app.post('/api/songs/:id/edit', (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
   if (song.adminStatus === 'checked') {

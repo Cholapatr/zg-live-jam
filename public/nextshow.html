@@ -318,6 +318,7 @@ function render() {
           <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
           <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
+        ${songEditBtnHtml(s)}
         ${historySongActionsHtml(s.id)}
       </div>
       <div class="q-actions">
@@ -428,6 +429,7 @@ function renderPlayedShow() {
           <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
           <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
+        ${songEditBtnHtml(s)}
         ${historySongActionsHtml(s.id)}
       </div>
       ${isOpenMode() ? `<div class="btn-row" style="margin-top:8px;"><button data-undo="${s.id}">↩ ยังไม่เล่น</button></div>` : ''}

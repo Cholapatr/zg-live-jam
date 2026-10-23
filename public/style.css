@@ -1041,7 +1041,7 @@ a.rv-link.on { color: var(--text, #fff); font-weight: 700; text-decoration: unde
 body.is-history .fab,
 body.is-history button[data-vote], body.is-history button[data-qvote],
 body.is-history button[data-up], body.is-history button[data-down], body.is-history button[data-done], body.is-history button[data-out], body.is-history button[data-undo],
-body.is-history button[data-edit], body.is-history button[data-del],
+body.is-history button[data-del],
 body.is-history button[data-level], body.is-history select.mini-level, body.is-history .mine-emoji { display: none !important; }
 body.is-history .drag-handle { pointer-events: none; }
 button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-weight: 600; }
@@ -1084,3 +1084,5 @@ body.is-history .card.played .grow { opacity: .6; }
   .hist-actions .hl { display: none; }
   .hist-actions button { padding: 6px 10px; }
 }
+
+.btn-song-edit { flex-shrink: 0; align-self: flex-start; padding: 6px 10px; }

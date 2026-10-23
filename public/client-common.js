@@ -212,7 +212,7 @@ function applyHistoryUi() {
     bar = document.createElement('div');
     bar.id = 'history-banner';
     bar.className = 'history-banner';
-    bar.textContent = '📜 Event นี้เป็นประวัติ (History) — ดูย้อนหลังได้อย่างเดียว ไม่สามารถเพิ่ม/โหวต/แก้ไขเพลงได้';
+    bar.textContent = '📜 Event นี้เป็นประวัติ (History) — ดูย้อนหลังได้ ไม่สามารถเพิ่ม/โหวตเพลงได้ (แก้ไขชื่อเพลงที่พิมพ์ผิดได้)';
     hdr.insertAdjacentElement('afterend', bar);
   }
 }
@@ -1019,23 +1019,45 @@ async function histOpenPlaylistModal(songId) {
   bg.id = 'hist-pl-bg'; bg.className = 'modal-bg modal-center'; bg.style.display = 'flex';
   bg.innerHTML = '<div class="modal"><button class="close-x" id="hpl-x">✕</button>' +
     '<h2 style="margin-top:0;">📁 Add to Playlist</h2>' +
-    '<div class="small-note" style="margin-bottom:8px;">เลือก Playlist ที่จะใส่เพลงนี้ (เป็น Playlist เดียวกับในหน้า Favourite) โดยไม่ต้องเพิ่มเข้า ⭐ Favourite ก่อน</div>' +
-    '<div class="pl-pick-list">' + (pls.length ? pls.map(p => '<label class="pl-pick-row"><input type="checkbox" data-plid="' + p.id + '"' + (checked.has(p.id) ? ' checked' : '') + ' /><span><b>' + escapeHtml(p.name) + '</b> <span class="small-note">' + (p.visibility === 'public' ? '🌐 Public' : '🔒 Private') + '</span></span></label>').join('') : '<div class="empty">ยังไม่มี Playlist — สร้างใหม่ด้านล่างได้เลย</div>') + '</div>' +
-    '<label style="display:block;margin-top:10px;">＋ สร้าง Playlist ใหม่ (ถ้าต้องการ)</label>' +
-    '<input type="text" id="hpl-new" maxlength="60" placeholder="ชื่อ Playlist ใหม่" />' +
-    '<div class="btn-row" id="hpl-vis" style="margin-top:6px;"><button type="button" data-vis="private" class="selected">🔒 Private</button><button type="button" data-vis="public">🌐 Public</button></div>' +
+    '<div class="small-note" style="margin-bottom:8px;">เลือก Playlist ที่จะใส่เพลงนี้ (Playlist เดียวกับในหน้า Favourite) ไม่ต้องเพิ่มเข้า ⭐ Favourite ก่อน</div>' +
+    '<div class="pl-pick-list">' + (pls.length ? pls.map(p => '<label class="pl-pick-row"><input type="checkbox" data-plid="' + p.id + '"' + (checked.has(p.id) ? ' checked' : '') + ' /><span><b>' + escapeHtml(p.name) + '</b> <span class="small-note">' + (p.visibility === 'public' ? '🌐 Public' : '🔒 Private') + '</span></span></label>').join('') : '<div class="empty">ยังไม่มี Playlist</div>') + '</div>' +
+    '<button type="button" id="hpl-newbtn" style="width:100%;margin-top:10px;">＋ สร้าง Playlist ใหม่…</button>' +
     '<div class="btn-row" style="margin-top:14px;"><button id="hpl-cancel" style="flex:1;">ยกเลิก</button><button class="btn-blue" id="hpl-save" style="flex:1;">บันทึก</button></div></div>';
   document.body.appendChild(bg);
-  let vis = 'private';
   const close = () => bg.remove();
   bg.querySelector('#hpl-x').onclick = close; bg.querySelector('#hpl-cancel').onclick = close;
   bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
-  bg.querySelectorAll('#hpl-vis button').forEach(b => b.addEventListener('click', () => { vis = b.dataset.vis; bg.querySelectorAll('#hpl-vis button').forEach(x => x.classList.toggle('selected', x === b)); }));
   bg.querySelectorAll('input[data-plid]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) checked.add(cb.dataset.plid); else checked.delete(cb.dataset.plid); }));
+  const url = '/api/songs/' + encodeURIComponent(songId) + '/playlists';
   bg.querySelector('#hpl-save').onclick = async () => {
-    const r = await histPost('/api/songs/' + encodeURIComponent(songId) + '/playlists', { playlistIds: [...checked], newName: bg.querySelector('#hpl-new').value.trim(), visibility: vis });
+    const r = await histPost(url, { playlistIds: [...checked] });
     if (!r) return;
     close(); showToast('📁 บันทึกลง Playlist แล้ว');
+  };
+  // Second pop-up: create a brand-new playlist (name + Private/Public), finished in its own window.
+  bg.querySelector('#hpl-newbtn').onclick = () => {
+    const nb = document.createElement('div');
+    nb.className = 'modal-bg modal-center'; nb.style.display = 'flex'; nb.style.zIndex = '1200';
+    nb.innerHTML = '<div class="modal"><button class="close-x" id="hnp-x">✕</button>' +
+      '<h2 style="margin-top:0;">＋ สร้าง Playlist ใหม่</h2>' +
+      '<label>ชื่อ Playlist *</label><input type="text" id="hnp-name" maxlength="60" placeholder="เช่น เพลงร้องคาราโอเกะ, เพลงช้า" />' +
+      '<label style="display:block;margin-top:8px;">การมองเห็น</label>' +
+      '<div class="btn-row" id="hnp-vis"><button type="button" data-vis="private" class="selected">🔒 Private (เห็นคนเดียว)</button><button type="button" data-vis="public">🌐 Public (เพื่อนดูได้)</button></div>' +
+      '<div class="small-note" style="margin-top:6px;">เพลงนี้จะถูกใส่ใน Playlist ใหม่ให้อัตโนมัติ</div>' +
+      '<div class="btn-row" style="margin-top:14px;"><button id="hnp-cancel" style="flex:1;">ยกเลิก</button><button class="btn-blue" id="hnp-create" style="flex:1;">สร้าง</button></div></div>';
+    document.body.appendChild(nb);
+    let vis = 'private';
+    const closeNb = () => nb.remove();
+    nb.querySelector('#hnp-x').onclick = closeNb; nb.querySelector('#hnp-cancel').onclick = closeNb;
+    nb.querySelectorAll('#hnp-vis button').forEach(b => b.addEventListener('click', () => { vis = b.dataset.vis; nb.querySelectorAll('#hnp-vis button').forEach(x => x.classList.toggle('selected', x === b)); }));
+    nb.querySelector('#hnp-name').focus();
+    nb.querySelector('#hnp-create').onclick = async () => {
+      const name = nb.querySelector('#hnp-name').value.trim();
+      if (!name) { showToast('กรุณาใส่ชื่อ Playlist'); return; }
+      const r = await histPost(url, { playlistIds: [...checked], newName: name, visibility: vis });
+      if (!r) return;
+      closeNb(); close(); showToast('📁 สร้าง Playlist "' + name + '" และเพิ่มเพลงแล้ว');
+    };
   };
 }
 document.addEventListener('click', (e) => {
@@ -1043,4 +1065,47 @@ document.addEventListener('click', (e) => {
   if (a) { histAddFavourite(a.dataset.hfav); return; }
   const p = e.target.closest && e.target.closest('button[data-hpl]');
   if (p) histOpenPlaylistModal(p.dataset.hpl);
+});
+
+
+// ---- Edit a song of an event (fix a typo) — shared by Next Show List etc. ----
+function songEditBtnHtml(s) {
+  return '<button type="button" class="btn-song-edit" title="แก้ไขเพลงนี้" data-sedit="' + escapeHtml(s.id) + '" data-t="' + escapeHtml(s.title || '') + '" data-a="' + escapeHtml(s.artist || '') + '" data-c="' + escapeHtml(s.chordUrl || s.chordId || '') + '" data-st="' + escapeHtml(s.adminStatus || '') + '">✏️</button>';
+}
+function openSongEditModal(btn) {
+  if (btn.dataset.st === 'checked') { alert('Admin แก้ไขแล้ว ตอนนี้ไม่สามารถแก้ไขได้ด้วยตนเองได้ ถ้าต้องการแก้ไข ให้แจ้ง Admin'); return; }
+  const id = btn.dataset.sedit;
+  let bg = document.getElementById('song-edit-bg'); if (bg) bg.remove();
+  bg = document.createElement('div');
+  bg.id = 'song-edit-bg'; bg.className = 'modal-bg modal-center'; bg.style.display = 'flex'; bg.style.zIndex = '1200';
+  bg.innerHTML = '<div class="modal"><button class="close-x" id="se-x">✕</button><h2 style="margin-top:0;">แก้ไขเพลง</h2>' +
+    '<div class="small-note" style="margin-bottom:10px;">(ถ้าคุณไม่ได้เป็นคนขอเพลงนี้ กรุณาอย่าแก้ไขข้อมูลของคนอื่น)</div>' +
+    '<label>ชื่อเพลง *</label><input type="text" id="se-title" />' +
+    '<label>ศิลปิน</label><input type="text" id="se-artist" />' +
+    '<label>หมายเลข/ลิงก์คอร์ด dochord (ไม่บังคับ)</label><input type="text" id="se-chord" placeholder="เช่น 378192 หรือ https://www.dochord.com/378192/" />' +
+    '<div class="btn-row" style="margin-top:14px;"><button id="se-cancel" style="flex:1;">ยกเลิก</button><button class="primary" id="se-save" style="flex:1;">บันทึกการแก้ไข</button></div></div>';
+  document.body.appendChild(bg);
+  bg.querySelector('#se-title').value = btn.dataset.t; bg.querySelector('#se-artist').value = btn.dataset.a; bg.querySelector('#se-chord').value = btn.dataset.c;
+  const close = () => bg.remove();
+  bg.querySelector('#se-x').onclick = close; bg.querySelector('#se-cancel').onclick = close;
+  bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  bg.querySelector('#se-save').onclick = async () => {
+    const title = bg.querySelector('#se-title').value.trim();
+    if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
+    const chordInput = bg.querySelector('#se-chord').value.trim();
+    let chordUrl = '';
+    if (chordInput) {
+      chordUrl = buildDochordUrl(chordInput) || '';
+      if (!chordUrl) { showToast('รูปแบบหมายเลข/ลิงก์ dochord ไม่ถูกต้อง ลองใหม่หรือเว้นว่างไว้'); return; }
+    }
+    const res = await fetch('/api/songs/' + encodeURIComponent(id) + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, artist: bg.querySelector('#se-artist').value.trim(), chordUrl, chordId: '' }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409 && data.existing) { alert('มีคนขอเพลงนี้ไปแล้ว (รหัสคอร์ดตรงกัน)\n\nชื่อเพลง: ' + data.existing.title + '\nเสนอโดย: ' + (data.existing.requestedBy || 'ไม่ระบุชื่อ')); return; }
+    if (!res.ok) { showToast(data.error || 'แก้ไขไม่สำเร็จ'); return; }
+    close(); showToast('แก้ไขแล้ว ✓');
+  };
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('button[data-sedit]');
+  if (b) openSongEditModal(b);
 });
