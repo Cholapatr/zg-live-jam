@@ -182,15 +182,39 @@ function updateNavCounts(state) {
 // ---- Event selection (Request List / Next Show List are scoped per event) ----
 function getEventId() { return localStorage.getItem('zg_event_id') || ''; }
 function getEventName() { return localStorage.getItem('zg_event_name') || ''; }
-function setEvent(id, name, mode) {
+function setEvent(id, name, mode, status) {
   localStorage.setItem('zg_event_id', id);
   localStorage.setItem('zg_event_name', name || '');
   if (mode !== undefined) localStorage.setItem('zg_event_mode', mode === 'open' ? 'open' : 'approve');
+  if (status !== undefined) localStorage.setItem('zg_event_status', status === 'history' ? 'history' : 'open');
 }
 function clearEvent() {
   localStorage.removeItem('zg_event_id');
   localStorage.removeItem('zg_event_name');
   localStorage.removeItem('zg_event_mode');
+  localStorage.removeItem('zg_event_status');
+}
+// 'history' = a finished event opened just to look back (view-only).
+function getEventStatus() { return localStorage.getItem('zg_event_status') === 'history' ? 'history' : 'open'; }
+// On the pages people use inside an event (not Admin), a history event is
+// view-only: add/vote/answer/queue controls are hidden (CSS body.is-history)
+// and a banner says so. The server refuses those actions anyway.
+function applyHistoryUi() {
+  const page = location.pathname.split('/').pop();
+  const viewOnlyPage = ['index.html', 'nextshow.html', 'musician.html'].includes(page);
+  const on = viewOnlyPage && getEventStatus() === 'history' && !!getEventId();
+  document.body.classList.toggle('is-history', on);
+  let bar = document.getElementById('history-banner');
+  if (!on) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    const hdr = document.querySelector('header.top');
+    if (!hdr) return;
+    bar = document.createElement('div');
+    bar.id = 'history-banner';
+    bar.className = 'history-banner';
+    bar.textContent = '📜 Event นี้เป็นประวัติ (History) — ดูย้อนหลังได้อย่างเดียว ไม่สามารถเพิ่ม/โหวต/แก้ไขเพลงได้';
+    hdr.insertAdjacentElement('afterend', bar);
+  }
 }
 // 'open' = "Everybody can set next show list" (no Request List page),
 // 'approve' = "Approve First" (the original mode).
@@ -239,6 +263,7 @@ function renderEventHeader() {
   if (navEl) navEl.style.display = name ? '' : 'none';
   applyEventModeNav();
   renderJoinName();
+  applyHistoryUi();
   if (leaveEl) {
     leaveEl.style.display = name ? '' : 'none';
     if (!leaveEl.dataset.wired) {
@@ -294,6 +319,7 @@ function initPresence(socket) {
   const announce = async () => {
     const eventId = getEventId();
     if (!eventId) return;
+    if (getEventStatus() === 'history') return; // just browsing history — not "in" the event
     const userId = await getMyUserId();
     socket.emit('presence-join', {
       eventId,
@@ -696,7 +722,7 @@ function liveEmbedUrl(url) {
 function initLiveBanner() {
   const hdr = document.querySelector('header.top');
   const id = getEventId();
-  if (IN_FRAME || !hdr || !id || document.getElementById('live-banner')) return;
+  if (IN_FRAME || !hdr || !id || getEventStatus() === 'history' || document.getElementById('live-banner')) return;
   const bar = document.createElement('div');
   bar.id = 'live-banner';
   bar.className = 'live-banner';

@@ -86,6 +86,13 @@
       <b>Everybody can set next show list</b> — ไม่ต้องมี Admin อนุมัติเพลง เหลือเมนู "Next Show List", "Musician", "Admin" เพลงที่ใครขอจะเข้า Next Show List ทันที ทุกคนกด "เล่นแล้ว", ย้ายขึ้น-ลง และนำออกจากคิวได้เองในหน้า Next Show List
     </div>
 
+    <label style="display:block;margin-top:8px;">ประเภท Event</label>
+    <select id="f-status" style="width:100%;">
+      <option value="open">Open — Event ที่ใช้งานอยู่ / กำลังจะมาถึง</option>
+      <option value="history">History — เก็บไว้ดูย้อนหลัง (เพิ่มเพลงไม่ได้)</option>
+    </select>
+    <div class="small-note" style="margin-top:4px;">History: ไว้ย้อนดูว่า Event นั้นเล่นเพลงอะไรไปบ้าง คนทั่วไปดูได้อย่างเดียว เพิ่ม/โหวต/แก้ไขเพลงไม่ได้ จะแสดงอยู่ส่วน History ล่างสุดของรายการ</div>
+
     <label>วันที่ (ไม่บังคับ)</label>
     <input type="date" id="f-date" />
 
@@ -146,23 +153,17 @@ function fmtDateTime(e) {
   return parts.join(' · ');
 }
 
-function renderEvents() {
-  const el = document.getElementById('event-list');
-  if (!events.length) {
-    el.innerHTML = '<div class="empty">ยังไม่มี Event — กด "＋ เพิ่ม Event" ด้านล่างเพื่อเริ่มต้น</div>';
-    return;
-  }
-  const currentId = getEventId();
-  el.innerHTML = events.map(e => {
-    const dt = fmtDateTime(e);
-    const isCurrent = e.id === currentId;
-    return `
+function eventCardHtml(e, currentId) {
+  const dt = fmtDateTime(e);
+  const isCurrent = e.id === currentId;
+  const hist = e.status === 'history';
+  return `
     <div class="card">
       <div class="row-flex">
         <h3 class="grow" style="margin-bottom:2px;">${escapeHtml(e.name)}</h3>
         ${isCurrent ? '<span class="badge strong">✓ Joined</span>' : ''}
       </div>
-      <div class="small-note" style="margin-bottom:4px;">โหมด: ${e.mode === 'open' ? 'Everybody can set next show list' : 'Approve First'}</div>
+      ${hist ? '' : `<div class="small-note" style="margin-bottom:4px;">โหมด: ${e.mode === 'open' ? 'Everybody can set next show list' : 'Approve First'}</div>`}
       ${dt ? `<div class="small-note" style="margin-bottom:6px;">${escapeHtml(dt)}</div>` : ''}
       ${e.location ? `<div class="artist" style="margin-bottom:2px;">📍 ${escapeHtml(e.location)}</div>` : ''}
       ${e.mapsUrl ? `<a href="${escapeHtml(e.mapsUrl)}" target="_blank" rel="noopener" class="link-out">🗺 เปิด Google Maps</a>` : ''}
@@ -173,11 +174,27 @@ function renderEvents() {
         ${e.contactEmail ? ' · <a class="link-out" style="margin-top:0;" href="mailto:' + escapeHtml(e.contactEmail) + '">' + escapeHtml(e.contactEmail) + '</a>' : ''}
       </div>` : ''}
       <div class="btn-row" style="margin-top:10px;">
-        <button class="primary" data-join="${e.id}" style="flex:1;" ${isCurrent ? 'disabled' : ''}>${isCurrent ? '✓ Joined' : 'Join Event'}</button>
+        ${hist
+          ? `<button class="btn-grey" data-join="${e.id}" style="flex:1;">📜 ${isCurrent ? 'Viewing' : 'View History'}</button>`
+          : `<button class="primary" data-join="${e.id}" style="flex:1;" ${isCurrent ? 'disabled' : ''}>${isCurrent ? '✓ Joined' : 'Join Event'}</button>`}
         <button data-edit="${e.id}">✏️ แก้ไข</button>
       </div>
     </div>`;
-  }).join('');
+}
+
+function renderEvents() {
+  const el = document.getElementById('event-list');
+  if (!events.length) {
+    el.innerHTML = '<div class="empty">ยังไม่มี Event — กด "＋ เพิ่ม Event" ด้านล่างเพื่อเริ่มต้น</div>';
+    return;
+  }
+  const currentId = getEventId();
+  const open = events.filter(e => e.status !== 'history');
+  const hist = events.filter(e => e.status === 'history');
+  // Open events first; finished (History) events collected under their own heading at the bottom.
+  el.innerHTML =
+    (open.length ? open.map(e => eventCardHtml(e, currentId)).join('') : '<div class="empty">ไม่มี Event ที่เปิดอยู่</div>') +
+    (hist.length ? `<div class="section-title" style="margin:22px 4px 8px;">📜 History (ดูย้อนหลัง)</div>` + hist.map(e => eventCardHtml(e, currentId)).join('') : '');
 
   el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', () => joinEvent(b.dataset.join)));
   el.querySelectorAll('button[data-edit]').forEach(b => b.addEventListener('click', () => {
@@ -188,10 +205,11 @@ function renderEvents() {
 async function joinEvent(id) {
   const e = events.find(x => x.id === id);
   if (!e) return;
-  if (!(await confirmGuestNameForJoin(e.name))) return; // Cancel = don't join
-  setEvent(e.id, e.name, e.mode);
+  // History events are only looked at: no name needed, nothing to join.
+  if (e.status !== 'history' && !(await confirmGuestNameForJoin(e.name))) return; // Cancel = don't join
+  setEvent(e.id, e.name, e.mode, e.status);
   try { sessionStorage.setItem('zg_entry_chosen', '1'); } catch (err) { /* fine */ }
-  location.href = e.mode === 'open' ? 'nextshow.html' : 'index.html';
+  location.href = (e.mode === 'open' || e.status === 'history') ? 'nextshow.html' : 'index.html';
 }
 
 // First arrival (no event joined yet, nothing chosen this visit): make the
@@ -202,13 +220,16 @@ function maybeShowEntryChoice() {
   try { chosen = !!sessionStorage.getItem('zg_entry_chosen'); } catch (err) { /* fine */ }
   if (chosen || getEventId()) return;
   const list = document.getElementById('entry-event-list');
-  list.innerHTML = events.length ? events.map(ev => {
+  const entryBtn = ev => {
     const dt = fmtDateTime(ev);
-    return `<button class="entry-event-btn btn-blue" data-entry-join="${ev.id}">
-      <b>${escapeHtml(ev.name)}</b>
-      ${dt ? `<span class="small-note">${escapeHtml(dt)}</span>` : ''}
+    const h = ev.status === 'history';
+    return `<button class="entry-event-btn ${h ? 'btn-grey' : 'btn-blue'}" data-entry-join="${ev.id}">
+      <b>${h ? '📜 ' : ''}${escapeHtml(ev.name)}</b>
+      ${dt ? `<span class="small-note" ${h ? 'style="color:#e5e8ec"' : ''}>${escapeHtml(dt)}</span>` : ''}
     </button>`;
-  }).join('') : '<div class="small-note" style="text-align:center;padding:8px;">ยังไม่มี Event ในโหมดนี้</div>';
+  };
+  const sorted = events.filter(x => x.status !== 'history').concat(events.filter(x => x.status === 'history'));
+  list.innerHTML = events.length ? sorted.map(entryBtn).join('') : '<div class="small-note" style="text-align:center;padding:8px;">ยังไม่มี Event ในโหมดนี้</div>';
   list.querySelectorAll('button[data-entry-join]').forEach(b => b.addEventListener('click', () => joinEvent(b.dataset.entryJoin)));
   document.getElementById('entry-modal-bg').style.display = 'flex';
 }
@@ -289,6 +310,7 @@ function openEventForm(existing) {
   document.getElementById('event-modal-title').textContent = existing ? 'แก้ไข Event' : 'เพิ่ม Event';
   document.getElementById('f-name').value = existing ? existing.name : '';
   document.getElementById('f-mode').value = existing && existing.mode === 'open' ? 'open' : 'approve';
+  document.getElementById('f-status').value = existing && existing.status === 'history' ? 'history' : 'open';
   document.getElementById('mode-help').style.display = 'none';
   document.getElementById('f-date').value = existing ? existing.date : '';
   document.getElementById('f-timefrom').value = existing ? existing.timeFrom : '';
@@ -350,6 +372,7 @@ document.getElementById('btn-event-save').addEventListener('click', async () => 
     scope: getMode(),
     name,
     mode: document.getElementById('f-mode').value,
+    status: document.getElementById('f-status').value,
     date: document.getElementById('f-date').value,
     timeFrom: document.getElementById('f-timefrom').value,
     timeTo: document.getElementById('f-timeto').value,
@@ -376,7 +399,7 @@ document.getElementById('btn-event-save').addEventListener('click', async () => 
   showToast(editingId ? 'แก้ไข Event แล้ว ✓' : 'เพิ่ม Event แล้ว ✓');
   // If we're editing the event the person is currently joined into, keep
   // their local "current event" name in sync too.
-  if (editingId && getEventId() === editingId) setEvent(editingId, data.event.name, data.event.mode);
+  if (editingId && getEventId() === editingId) setEvent(editingId, data.event.name, data.event.mode, data.event.status);
   await loadEvents();
 });
 

@@ -115,6 +115,17 @@ function eventScope(e) {
 // for admin to curate the Next Show List. 'open': every request goes straight
 // into the Next Show List and anyone can reorder / remove / mark played.
 function eventMode(e) { return e && e.mode === 'open' ? 'open' : 'approve'; }
+// 'open' (default) = a live / upcoming event people take part in;
+// 'history' = finished event kept for looking back (nothing can be added).
+function eventStatus(e) { return e && e.status === 'history' ? 'history' : 'open'; }
+const HISTORY_MSG = 'Event นี้เป็นประวัติ (History) ดูย้อนหลังได้อย่างเดียว ไม่สามารถเพิ่มหรือแก้ไขเพลงได้';
+// For public song routes /api/songs/:id/… — refuse when the song's event is history.
+function blockHistorySong(req, res, next) {
+  const sg = findSong(req.params.id);
+  const ev = sg && findEvent(sg.eventId);
+  if (ev && eventStatus(ev) === 'history') return res.status(403).json({ error: HISTORY_MSG, history: true });
+  next();
+}
 
 function publicEvent(e) {
   return {
@@ -122,6 +133,7 @@ function publicEvent(e) {
     name: e.name,
     scope: eventScope(e),
     mode: eventMode(e),
+    status: eventStatus(e),
     date: e.date || '',
     timeFrom: e.timeFrom || '',
     timeTo: e.timeTo || '',
@@ -934,6 +946,7 @@ app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
   if (!eventId || !findEvent(eventId)) {
     return res.status(400).json({ error: 'ไม่พบ Event นี้ กรุณาเลือก Event ก่อน' });
   }
+  if (eventStatus(findEvent(eventId)) === 'history') return res.status(403).json({ error: HISTORY_MSG, history: true });
   if (fav.chordId) {
     const dup = db.songs.find((s) => s.eventId === eventId && s.chordId && s.chordId === fav.chordId);
     if (dup) {
@@ -1035,6 +1048,7 @@ function readEventFields(body) {
     contactEmail: (contactEmail || '').trim(),
     contactMobile: (contactMobile || '').trim(),
     mode: body && body.mode === 'open' ? 'open' : (body && body.mode === 'approve' ? 'approve' : undefined),
+    status: body && body.status === 'history' ? 'history' : (body && body.status === 'open' ? 'open' : undefined),
   };
 }
 
@@ -1042,7 +1056,7 @@ app.post('/api/admin/events', checkPin, (req, res) => {
   const fields = readEventFields(req.body);
   if (!fields.name) return res.status(400).json({ error: 'ต้องระบุชื่อ Event' });
   const scope = req.body && req.body.scope === 'any' ? 'any' : 'zygen';
-  const event = { id: newId(), ...fields, mode: fields.mode || 'approve', scope, createdAt: Date.now() };
+  const event = { id: newId(), ...fields, mode: fields.mode || 'approve', status: fields.status || 'open', scope, createdAt: Date.now() };
   db.events.push(event);
   saveDb();
   broadcast();
@@ -1055,6 +1069,7 @@ app.post('/api/admin/events/:id/edit', checkPin, (req, res) => {
   const fields = readEventFields(req.body);
   if (!fields.name) return res.status(400).json({ error: 'ต้องระบุชื่อ Event' });
   if (fields.mode === undefined) delete fields.mode; // keep the current mode if none was sent
+  if (fields.status === undefined) delete fields.status;
   Object.assign(event, fields);
   saveDb();
   broadcast();
@@ -1129,6 +1144,7 @@ app.post('/api/songs', (req, res) => {
   if (!eventId || !findEvent(eventId)) {
     return res.status(400).json({ error: 'ไม่พบ Event นี้ กรุณาเลือก Event ใหม่' });
   }
+  if (eventStatus(findEvent(eventId)) === 'history') return res.status(403).json({ error: HISTORY_MSG, history: true });
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: 'ต้องระบุชื่อเพลง' });
   }
@@ -1207,7 +1223,7 @@ app.post('/api/songs', (req, res) => {
 });
 
 // Vote (or change vote) on an existing song
-app.post('/api/songs/:id/vote', (req, res) => {
+app.post('/api/songs/:id/vote', blockHistorySong, (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
   const { clientId, voteType, targetName, voterName } = req.body || {};
@@ -1227,7 +1243,7 @@ app.post('/api/songs/:id/vote', (req, res) => {
 
 // Guests can remove their own mistaken/changed-mind request, but only while
 // it hasn't gathered much interest yet — past the threshold, only admin can.
-app.post('/api/songs/:id/self-delete', (req, res) => {
+app.post('/api/songs/:id/self-delete', blockHistorySong, (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
   const interested = song.votes.want.length + song.votes.singMyself.length;
@@ -1246,7 +1262,7 @@ app.post('/api/songs/:id/self-delete', (req, res) => {
 // Guests can fix a typo/mistake in their own request (title/artist/chord),
 // but once admin has verified ("ตรวจสอบแล้ว") the entry it's locked — only
 // admin can change it from that point on.
-app.post('/api/songs/:id/edit', (req, res) => {
+app.post('/api/songs/:id/edit', blockHistorySong, (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
   if (song.adminStatus === 'checked') {
@@ -1289,7 +1305,7 @@ app.post('/api/songs/:id/edit', (req, res) => {
 });
 
 // Musician quick response (with optional role e.g. guitar/drums/vocals)
-app.post('/api/songs/:id/musician-response', (req, res) => {
+app.post('/api/songs/:id/musician-response', blockHistorySong, (req, res) => {
   const song = findSong(req.params.id);
   if (!song) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
   const songEvent = findEvent(song.eventId);
@@ -1463,7 +1479,7 @@ function checkQueuePerm(req, res, next) {
   const b = req.body || {};
   let ev = b.eventId ? findEvent(b.eventId) : null;
   if (!ev && b.songId) { const sg = findSong(b.songId); if (sg) ev = findEvent(sg.eventId); }
-  if (ev && eventMode(ev) === 'open') return next();
+  if (ev && eventMode(ev) === 'open' && eventStatus(ev) !== 'history') return next();
   return checkPin(req, res, next);
 }
 

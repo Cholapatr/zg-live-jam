@@ -573,7 +573,7 @@ async function loadState() {
   const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
   if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
   state = await res.json();
-  setEvent(state.event.id, state.event.name, state.event.mode);
+  setEvent(state.event.id, state.event.name, state.event.mode, state.event.status);
   renderEventHeader();
   document.getElementById('btn-add').style.display = isOpenMode() ? '' : 'none';
   await loadSongRequestStatus();

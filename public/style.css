@@ -1035,3 +1035,13 @@ a.rv-link.on { color: var(--text, #fff); font-weight: 700; text-decoration: unde
 .pl-pick-row { display:flex; align-items:flex-start; gap:10px; padding:8px 2px; border-bottom:1px solid rgba(255,255,255,.06); cursor:pointer; }
 .pl-pick-row:last-child { border-bottom:0; }
 .pl-pick-row input { margin-top:3px; }
+
+/* History events: view-only */
+.history-banner { text-align:center; padding:8px 12px; background:#4a5568; color:#fff; font-size:14px; font-weight:600; }
+body.is-history .fab,
+body.is-history button[data-vote], body.is-history button[data-qvote],
+body.is-history button[data-up], body.is-history button[data-down], body.is-history button[data-done], body.is-history button[data-out], body.is-history button[data-undo],
+body.is-history button[data-edit], body.is-history button[data-del],
+body.is-history button[data-level], body.is-history select.mini-level, body.is-history .mine-emoji { display: none !important; }
+body.is-history .drag-handle { pointer-events: none; }
+button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-weight: 600; }
