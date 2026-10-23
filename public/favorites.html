@@ -43,6 +43,9 @@
 
   <div id="fav-wrap" style="display:none;">
     <div class="section-title" style="margin-top:0;">เพลงโปรดของคุณ</div>
+    <a class="btn" href="friends.html" style="display:block;text-align:center;margin-bottom:10px;text-decoration:none;">👥 ดู Public Playlist ของเพื่อนๆ</a>
+    <div id="pl-bar" class="pl-bar"></div>
+    <div id="pl-detail" class="pl-detail" style="display:none;"></div>
     <input type="text" id="f-search" placeholder="🔍 ค้นหาเพลงโปรด (ชื่อเพลง/ศิลปิน)" style="margin-bottom:10px;" />
     <div id="fav-list"><div class="empty">กำลังโหลด...</div></div>
     <button id="btn-share" style="width:100%; margin-top:16px;">🔗 Share My Favourite ให้เพื่อน</button>
@@ -134,6 +137,55 @@
       <button class="warn" id="btn-restore-replace" style="width:100%;">♻️ แทนที่รายการเดิมทั้งหมด (Replace)</button>
     </div>
     <div class="small-note" style="margin-top:10px;">Merge: เพิ่มเฉพาะเพลงที่ยังไม่มีในรายการปัจจุบัน (ของเดิมไม่หาย) · Replace: ลบรายการปัจจุบันทั้งหมด แล้วใช้ข้อมูลจากไฟล์แทน (ย้อนกลับไม่ได้)</div>
+  </div>
+</div>
+
+<!-- Playlist create / edit -->
+<div class="modal-bg modal-center" id="pl-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="pl-modal-close">✕</button>
+    <h2 id="pl-modal-title" style="margin-top:0;">Playlist ใหม่</h2>
+    <label>ชื่อ Playlist *</label>
+    <input type="text" id="pl-name" maxlength="60" placeholder="เช่น เพลงร้องคาราโอเกะ, เพลงช้า" />
+    <label style="display:block;margin-top:8px;">การมองเห็น</label>
+    <div class="btn-row" id="pl-vis-row">
+      <button type="button" data-vis="private">🔒 Private (เห็นคนเดียว)</button>
+      <button type="button" data-vis="public">🌐 Public (เพื่อนดูได้)</button>
+    </div>
+    <div class="small-note" style="margin-top:6px;">Public: ภายหลังเพื่อนจะเปิดดู Playlist นี้ได้จากหน้าสำหรับดูเพลงโปรดของเพื่อน (กำลังจะมี)</div>
+    <div class="btn-row" style="margin-top:14px;">
+      <button id="pl-cancel" style="flex:1;">ยกเลิก</button>
+      <button class="btn-blue" id="pl-save" style="flex:1;">บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Choose which favourites are in a playlist -->
+<div class="modal-bg modal-center" id="plsongs-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="plsongs-modal-close">✕</button>
+    <h2 style="margin-top:0;">เลือกเพลงใน Playlist <span id="plsongs-name"></span></h2>
+    <input type="text" id="plsongs-search" placeholder="🔍 ค้นหา" style="margin-bottom:8px;" />
+    <div id="plsongs-list" class="pl-pick-list"></div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button id="plsongs-cancel" style="flex:1;">ยกเลิก</button>
+      <button class="btn-blue" id="plsongs-save" style="flex:1;">บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Put one favourite into playlists -->
+<div class="modal-bg modal-center" id="favpl-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="favpl-modal-close">✕</button>
+    <h2 style="margin-top:0;">ใส่ใน Playlist</h2>
+    <div id="favpl-song" class="small-note" style="margin-bottom:8px;"></div>
+    <div id="favpl-list" class="pl-pick-list"></div>
+    <button type="button" id="favpl-new" style="width:100%;margin-top:8px;">＋ สร้าง Playlist ใหม่</button>
+    <div class="btn-row" style="margin-top:12px;">
+      <button id="favpl-cancel" style="flex:1;">ยกเลิก</button>
+      <button class="btn-blue" id="favpl-save" style="flex:1;">บันทึก</button>
+    </div>
   </div>
 </div>
 
@@ -306,11 +358,12 @@ function closePracticePanel() {
 
 function renderSplitRightList() {
   const el = document.getElementById('split-song-list');
-  if (!favorites.length) {
+  const splitList = baseFavs();
+  if (!splitList.length) {
     el.innerHTML = '<div class="empty" style="padding:16px 4px;">ยังไม่มีเพลงโปรด</div>';
     return;
   }
-  el.innerHTML = favorites.map((f, idx) => `
+  el.innerHTML = splitList.map((f, idx) => `
     <div class="split-song-item ${f.id === currentPracticeFavId ? 'active' : ''}" data-split-fav="${f.id}">
       <span class="order-num">${idx + 1}</span>
       <div class="info">
@@ -330,6 +383,178 @@ const favZoomInputEl = document.getElementById('chord-zoom-input');
 favZoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(favZoomInputEl.value) || 100));
 favZoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(favZoomInputEl.value) || 100); favZoomInputEl.blur(); } });
 window.addEventListener('resize', () => { if (currentPracticeFavId) applyPanelZoomSize(); });
+
+// ---- Playlists: views over the Favourite list ----
+let playlists = [];
+let currentView = 'all'; // 'all' or a playlist id
+const plById = (id) => playlists.find(p => p.id === id);
+// The favourites visible in the current view (playlist order inside a playlist).
+function baseFavs() {
+  if (currentView === 'all') return favorites;
+  const p = plById(currentView);
+  if (!p) { currentView = 'all'; return favorites; }
+  return p.songIds.map(id => favorites.find(f => f.id === id)).filter(Boolean);
+}
+const VIS_LABEL = { private: '🔒 Private', public: '🌐 Public' };
+
+function renderPlaylistBar() {
+  if (currentView !== 'all' && !plById(currentView)) currentView = 'all';
+  const bar = document.getElementById('pl-bar');
+  bar.innerHTML =
+    `<button class="pl-chip ${currentView === 'all' ? 'selected' : ''}" data-view="all">⭐ ทั้งหมด (${favorites.length})</button>` +
+    playlists.map(p => `<button class="pl-chip ${currentView === p.id ? 'selected' : ''}" data-view="${p.id}">${p.visibility === 'public' ? '🌐' : '🔒'} ${escapeHtml(p.name)} (${p.songIds.filter(id => favorites.some(f => f.id === id)).length})</button>`).join('') +
+    `<button class="pl-chip pl-chip-new" id="pl-new">＋ Playlist ใหม่</button>`;
+  bar.querySelectorAll('button[data-view]').forEach(b => b.addEventListener('click', () => { currentView = b.dataset.view; renderFavs(); }));
+  document.getElementById('pl-new').addEventListener('click', () => openPlModal(null));
+  const det = document.getElementById('pl-detail');
+  const p = plById(currentView);
+  if (!p) { det.style.display = 'none'; return; }
+  det.style.display = '';
+  det.innerHTML = `
+    <div class="pl-detail-head"><b>${escapeHtml(p.name)}</b> <span class="small-note">· ${VIS_LABEL[p.visibility]}</span></div>
+    <div class="btn-row" style="margin-top:6px;">
+      <button class="btn-blue" id="pl-pick">🎵 เลือกเพลงใน Playlist</button>
+      <button id="pl-edit">✏️ แก้ไขชื่อ / การมองเห็น</button>
+      <button class="warn" id="pl-del">🗑 ลบ Playlist</button>
+    </div>`;
+  document.getElementById('pl-pick').addEventListener('click', () => openPlSongsModal(p.id));
+  document.getElementById('pl-edit').addEventListener('click', () => openPlModal(p));
+  document.getElementById('pl-del').addEventListener('click', async () => {
+    if (!confirm(`ลบ Playlist "${p.name}" ใช่หรือไม่? (เพลงโปรดยังอยู่เหมือนเดิม)`)) return;
+    const data = await plApi(`/api/playlists/${p.id}/delete`, {});
+    if (data) { currentView = 'all'; playlists = data.playlists; renderFavs(); showToast('ลบ Playlist แล้ว'); }
+  });
+}
+
+async function plApi(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || 'ทำรายการไม่สำเร็จ'); return null; }
+  return data;
+}
+
+// create / edit playlist
+let plEditingId = null, plVis = 'private', plAfterSave = null;
+function openPlModal(p, afterSave) {
+  plEditingId = p ? p.id : null;
+  plAfterSave = afterSave || null;
+  plVis = p ? p.visibility : 'private';
+  document.getElementById('pl-modal-title').textContent = p ? 'แก้ไข Playlist' : 'Playlist ใหม่';
+  document.getElementById('pl-name').value = p ? p.name : '';
+  paintPlVis();
+  document.getElementById('pl-modal-bg').style.display = 'flex';
+  document.getElementById('pl-name').focus();
+}
+function paintPlVis() {
+  document.querySelectorAll('#pl-vis-row button').forEach(b => b.classList.toggle('selected', b.dataset.vis === plVis));
+}
+document.querySelectorAll('#pl-vis-row button').forEach(b => b.addEventListener('click', () => { plVis = b.dataset.vis; paintPlVis(); }));
+const closePlModal = () => { document.getElementById('pl-modal-bg').style.display = 'none'; };
+document.getElementById('pl-modal-close').addEventListener('click', closePlModal);
+document.getElementById('pl-cancel').addEventListener('click', closePlModal);
+document.getElementById('pl-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('pl-save').click(); });
+document.getElementById('pl-save').addEventListener('click', async () => {
+  const name = document.getElementById('pl-name').value.trim();
+  if (!name) { showToast('กรุณาใส่ชื่อ Playlist'); return; }
+  const data = plEditingId
+    ? await plApi(`/api/playlists/${plEditingId}/edit`, { name, visibility: plVis })
+    : await plApi('/api/playlists', { name, visibility: plVis });
+  if (!data) return;
+  playlists = data.playlists;
+  closePlModal();
+  if (!plEditingId && data.playlist) currentView = data.playlist.id; // jump into the new playlist
+  const cb = plAfterSave; plAfterSave = null;
+  renderFavs();
+  showToast('บันทึก Playlist แล้ว ✓');
+  if (cb) cb(data.playlist);
+});
+
+// choose songs for a playlist
+let plSongsId = null;
+let plSongsChecked = new Set();
+function openPlSongsModal(pid) {
+  const p = plById(pid);
+  if (!p) return;
+  plSongsId = pid;
+  plSongsChecked = new Set(p.songIds);
+  document.getElementById('plsongs-name').textContent = '"' + p.name + '"';
+  document.getElementById('plsongs-search').value = '';
+  renderPlSongsList();
+  document.getElementById('plsongs-modal-bg').style.display = 'flex';
+}
+function renderPlSongsList() {
+  const q = document.getElementById('plsongs-search').value.trim().toLowerCase();
+  const list = favorites.filter(f => !q || (f.title || '').toLowerCase().includes(q) || (f.artist || '').toLowerCase().includes(q));
+  const el = document.getElementById('plsongs-list');
+  el.innerHTML = list.length ? list.map(f => `
+    <label class="pl-pick-row"><input type="checkbox" data-pick="${f.id}" ${plSongsChecked.has(f.id) ? 'checked' : ''} />
+      <span><b>${escapeHtml(f.title)}</b> <span class="small-note">${escapeHtml(f.artist || '')}</span></span></label>`).join('')
+    : '<div class="empty">ไม่พบเพลง</div>';
+  el.querySelectorAll('input[data-pick]').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) plSongsChecked.add(cb.dataset.pick); else plSongsChecked.delete(cb.dataset.pick);
+  }));
+}
+document.getElementById('plsongs-search').addEventListener('input', renderPlSongsList);
+const closePlSongs = () => { document.getElementById('plsongs-modal-bg').style.display = 'none'; };
+document.getElementById('plsongs-modal-close').addEventListener('click', closePlSongs);
+document.getElementById('plsongs-cancel').addEventListener('click', closePlSongs);
+document.getElementById('plsongs-save').addEventListener('click', async () => {
+  // keep existing order for songs that stay, append newly ticked ones
+  const p = plById(plSongsId);
+  const kept = (p ? p.songIds : []).filter(id => plSongsChecked.has(id));
+  const added = favorites.map(f => f.id).filter(id => plSongsChecked.has(id) && !kept.includes(id));
+  const data = await plApi(`/api/playlists/${plSongsId}/songs`, { favIds: kept.concat(added) });
+  if (!data) return;
+  playlists = data.playlists;
+  closePlSongs();
+  renderFavs();
+  showToast('บันทึกเพลงใน Playlist แล้ว ✓');
+});
+
+// put ONE favourite into playlists (from the 📁 button on its row)
+let favPlFavId = null;
+let favPlChecked = new Set();
+function openFavPlModal(favId) {
+  const fav = favorites.find(f => f.id === favId);
+  if (!fav) return;
+  favPlFavId = favId;
+  favPlChecked = new Set(playlists.filter(p => p.songIds.includes(favId)).map(p => p.id));
+  document.getElementById('favpl-song').textContent = fav.title + (fav.artist ? ' — ' + fav.artist : '');
+  renderFavPlList();
+  document.getElementById('favpl-modal-bg').style.display = 'flex';
+}
+function renderFavPlList() {
+  const el = document.getElementById('favpl-list');
+  el.innerHTML = playlists.length ? playlists.map(p => `
+    <label class="pl-pick-row"><input type="checkbox" data-plid="${p.id}" ${favPlChecked.has(p.id) ? 'checked' : ''} />
+      <span><b>${escapeHtml(p.name)}</b> <span class="small-note">${VIS_LABEL[p.visibility]}</span></span></label>`).join('')
+    : '<div class="empty">ยังไม่มี Playlist — กด "＋ สร้าง Playlist ใหม่" ด้านล่าง</div>';
+  el.querySelectorAll('input[data-plid]').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) favPlChecked.add(cb.dataset.plid); else favPlChecked.delete(cb.dataset.plid);
+  }));
+}
+const closeFavPl = () => { document.getElementById('favpl-modal-bg').style.display = 'none'; };
+document.getElementById('favpl-modal-close').addEventListener('click', closeFavPl);
+document.getElementById('favpl-cancel').addEventListener('click', closeFavPl);
+document.getElementById('favpl-new').addEventListener('click', () => {
+  const favId = favPlFavId;
+  closeFavPl();
+  // after creating, put the song straight into the new playlist
+  openPlModal(null, async (np) => {
+    if (!np) return;
+    const ids = playlists.filter(p => p.songIds.includes(favId)).map(p => p.id);
+    const data = await plApi(`/api/favorites/${favId}/playlists`, { playlistIds: [...new Set([...ids, np.id])] });
+    if (data) { playlists = data.playlists; renderFavs(); }
+  });
+});
+document.getElementById('favpl-save').addEventListener('click', async () => {
+  const data = await plApi(`/api/favorites/${favPlFavId}/playlists`, { playlistIds: [...favPlChecked] });
+  if (!data) return;
+  playlists = data.playlists;
+  closeFavPl();
+  renderFavs();
+  showToast('บันทึกแล้ว ✓');
+});
 
 function matchesSearch(f) {
   if (!searchQuery) return true;
@@ -354,21 +579,23 @@ function renderFavs() {
     }
   }
   renderSplitRightList();
+  renderPlaylistBar();
 
   const el = document.getElementById('fav-list');
   if (!favorites.length) {
     el.innerHTML = '<div class="empty">ยังไม่มีเพลงโปรด — กดปุ่ม ＋ เพิ่มเพลงโปรด ด้านล่างได้เลย</div>';
     return;
   }
-  const visible = favorites.filter(matchesSearch);
+  const base = baseFavs();
+  const visible = base.filter(matchesSearch);
   if (!visible.length) {
-    el.innerHTML = '<div class="empty">ไม่พบเพลงโปรดที่ตรงกับคำค้นหา</div>';
+    el.innerHTML = '<div class="empty">' + (currentView !== 'all' && !base.length ? 'Playlist นี้ยังไม่มีเพลง — กด "🎵 เลือกเพลงใน Playlist" ด้านบน' : 'ไม่พบเพลงโปรดที่ตรงกับคำค้นหา') + '</div>';
     return;
   }
   // Reorder arrows move a song relative to its neighbours in the FULL
   // (unfiltered) list, so they're only shown when search isn't narrowing
   // the view — otherwise "up/down" would be ambiguous about what it means.
-  const searching = !!searchQuery;
+  const searching = !!searchQuery || currentView !== 'all';
   el.innerHTML = visible.map(f => {
     const idx = favorites.indexOf(f);
     return `
@@ -386,6 +613,7 @@ function renderFavs() {
           <div class="fav-sub">${escapeHtml(f.artist || 'ไม่ระบุศิลปิน')} · ${chordDisplay(f)}</div>
         </div>
         <div class="fav-actions">
+          <button data-playlists="${f.id}" title="ใส่ใน Playlist">📁</button>
           <button class="btn-fav-request" data-request="${f.id}" title="ขอเพลงนี้">📣</button>
           <button class="btn-fav-edit" data-edit="${f.id}" title="แก้ไข">✏️</button>
           <button class="btn-fav-remove" data-remove="${f.id}" title="ลบ">🗑</button>
@@ -407,6 +635,9 @@ function renderFavs() {
       const data = await res.json();
       if (res.ok) { favorites = data.favorites; renderFavs(); showToast('ลบแล้ว'); }
     });
+  });
+  el.querySelectorAll('button[data-playlists]').forEach(btn => {
+    btn.addEventListener('click', () => openFavPlModal(btn.dataset.playlists));
   });
   el.querySelectorAll('button[data-request]').forEach(btn => {
     btn.addEventListener('click', () => openRequestModal(btn.dataset.request));
@@ -480,6 +711,7 @@ async function loadFavorites() {
   document.getElementById('fav-wrap').style.display = '';
   document.getElementById('btn-add').style.display = '';
   favorites = data.favorites || [];
+  playlists = data.playlists || [];
   renderFavs();
 }
 

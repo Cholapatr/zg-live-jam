@@ -179,11 +179,19 @@
 </main>
 
 <script>
+// Arriving at the cover page = leaving whatever event was joined, so the next
+// visit starts by choosing an event again.
+try {
+  ['zg_event_id', 'zg_event_name', 'zg_event_mode'].forEach(k => localStorage.removeItem(k));
+  sessionStorage.removeItem('zg_entry_chosen');
+} catch (e) { /* private mode — fine */ }
+
 // ---- Mode selection ----
 // Remembered per device so the rest of the app can later branch on it
 // (e.g. extra ZyGen-only features). Both modes work as guest.
 function chooseMode(mode) {
   try { localStorage.setItem('zg_mode', mode); } catch (e) { /* private mode — fine, just not remembered */ }
+  try { sessionStorage.removeItem('zg_entry_chosen'); } catch (e) { /* fine */ } // events.html asks again what to do
   location.href = 'events.html';
 }
 document.getElementById('mode-any').addEventListener('click', () => chooseMode('any'));

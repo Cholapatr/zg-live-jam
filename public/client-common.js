@@ -30,6 +30,24 @@ function getGuestName() {
 }
 function setGuestName(name) {
   if (name && name.trim()) localStorage.setItem('zg_guest_name', name.trim());
+  if (typeof renderJoinName === 'function') renderJoinName();
+}
+// The name this person joined the event with, shown next to the "N join"
+// presence widget in the header (only while an event is joined).
+function renderJoinName() {
+  const widget = document.getElementById('presence-widget');
+  if (!widget) return;
+  let chip = document.getElementById('join-name-chip');
+  const name = getGuestName();
+  if (!getEventName() || !name) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = document.createElement('span');
+    chip.id = 'join-name-chip';
+    chip.className = 'join-name-chip';
+    widget.parentNode.insertBefore(chip, widget);
+  }
+  chip.textContent = '🙋 ' + name;
+  chip.title = 'ชื่อที่คุณใช้เข้าร่วม Event นี้';
 }
 // Ask once (and remember) so votes can be attributed to a name. Cancel/blank
 // still lets them vote — they'll just show up as "ไม่ระบุชื่อ". This is a
@@ -66,11 +84,11 @@ function setMyRoles(arr) { localStorage.setItem('zg_musician_roles', JSON.string
 // presence never has to fall back to a generic "ผู้ร่วมงาน" placeholder.
 // Suggests the person's logged-in account name if they're signed in
 // (still editable — they can type something else), otherwise whatever name
-// this device already has saved. Cancelling just skips it — they can still
-// join; ensureGuestName() above will ask again the first time they vote.
+// this device already has saved. Returns true when they press Join, false on
+// Cancel (they changed their mind — the caller must NOT join the event).
 // Also syncs the musician-page name to match, so a fresh name entered when
 // joining a new event shows up there too instead of a stale one.
-async function confirmGuestNameForJoin() {
+async function confirmGuestNameForJoin(eventName) {
   let suggested = getGuestName();
   try {
     const res = await fetch('/api/me');
@@ -79,10 +97,45 @@ async function confirmGuestNameForJoin() {
     // ZyGen Event: prefer the Thai nickname (first name) from Employee Master Data.
     if (getMode() === 'zygen' && data.loggedIn && data.employeeDisplayName) suggested = data.employeeDisplayName;
   } catch (e) { /* not logged in / offline — fall back to existing device name */ }
-  const typed = prompt('ชื่อของคุณ (ให้คนอื่นใน event นี้รู้จักคุณ)', suggested || '');
-  if (typed !== null && typed.trim()) setGuestName(typed);
+  const typed = await askJoinName(eventName, suggested || '');
+  if (typed === null) return false; // "Cancel" — changed their mind, don't join
+  if (typed.trim()) setGuestName(typed);
   setMyName(getGuestName());
   setMyRoles(['🎶 ช่วยร้อง']);
+  return true;
+}
+
+// Centered pop-up: "join this event as <name>?" — resolves to the typed name
+// when they press Join, or null on Cancel / Esc / click outside.
+function askJoinName(eventName, suggested) {
+  return new Promise((resolve) => {
+    const bg = document.createElement('div');
+    bg.className = 'modal-bg modal-center';
+    bg.style.zIndex = '120';
+    bg.innerHTML = `
+      <div class="modal">
+        <h2 style="margin-top:0;">เข้าร่วม Event</h2>
+        <div class="small-note" id="jn-event" style="margin-bottom:10px;"></div>
+        <label>ชื่อของคุณ (ให้คนอื่นใน Event นี้รู้จักคุณ)</label>
+        <input type="text" id="jn-name" maxlength="60" />
+        <div class="btn-row" style="margin-top:14px;">
+          <button type="button" id="jn-cancel" style="flex:1;">Cancel</button>
+          <button type="button" id="jn-join" class="btn-blue" style="flex:1;">Join</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#jn-event').textContent = eventName || '';
+    const input = bg.querySelector('#jn-name');
+    input.value = suggested || '';
+    const done = (v) => { document.removeEventListener('keydown', onKey); bg.remove(); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') done(null); };
+    document.addEventListener('keydown', onKey);
+    bg.querySelector('#jn-join').addEventListener('click', () => done(input.value));
+    bg.querySelector('#jn-cancel').addEventListener('click', () => done(null));
+    bg.addEventListener('click', (e) => { if (e.target === bg) done(null); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(input.value); } });
+    input.focus(); input.select();
+  });
 }
 
 function escapeHtml(str) {
@@ -129,13 +182,24 @@ function updateNavCounts(state) {
 // ---- Event selection (Request List / Next Show List are scoped per event) ----
 function getEventId() { return localStorage.getItem('zg_event_id') || ''; }
 function getEventName() { return localStorage.getItem('zg_event_name') || ''; }
-function setEvent(id, name) {
+function setEvent(id, name, mode) {
   localStorage.setItem('zg_event_id', id);
   localStorage.setItem('zg_event_name', name || '');
+  if (mode !== undefined) localStorage.setItem('zg_event_mode', mode === 'open' ? 'open' : 'approve');
 }
 function clearEvent() {
   localStorage.removeItem('zg_event_id');
   localStorage.removeItem('zg_event_name');
+  localStorage.removeItem('zg_event_mode');
+}
+// 'open' = "Everybody can set next show list" (no Request List page),
+// 'approve' = "Approve First" (the original mode).
+function getEventMode() { return localStorage.getItem('zg_event_mode') === 'open' ? 'open' : 'approve'; }
+// In 'open' events the Request List tab doesn't exist — requests are made on
+// the Next Show List page and go straight into the queue.
+function applyEventModeNav() {
+  const hide = getEventMode() === 'open';
+  document.querySelectorAll('nav.tabs a[href="index.html"]').forEach((a) => { a.style.display = hide ? 'none' : ''; });
 }
 // Call at the top of any page whose content is scoped to one event (Request
 // List, Next Show List, นักดนตรี). Sends the person to events.html to pick
@@ -173,6 +237,8 @@ function renderEventHeader() {
     }
   }
   if (navEl) navEl.style.display = name ? '' : 'none';
+  applyEventModeNav();
+  renderJoinName();
   if (leaveEl) {
     leaveEl.style.display = name ? '' : 'none';
     if (!leaveEl.dataset.wired) {
@@ -788,6 +854,7 @@ function initPageChrome() {
       const r = (me && me.roles) || {};
       if (getMode() === 'zygen' && r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="employees.html">🗂 Master Data</a>');
       if (getMode() === 'zygen' && r.superadmin) menu.insertAdjacentHTML('beforeend', '<a href="role.html">🔑 Role</a>');
+      menu.insertAdjacentHTML('beforeend', '<a href="friends.html">👥 Public Playlist</a>');
       menu.insertAdjacentHTML('beforeend', '<a href="live.html">🔴 Live Broadcast</a>');
       menu.insertAdjacentHTML('beforeend', '<div class="logo-menu-who">' + (me && me.loggedIn
         ? 'ล็อกอิน: ' + escapeHtml([me.user.email].concat(me.user.altEmails || []).filter((v, i, a) => v && a.indexOf(v) === i).join(', ') || '(ไม่มีอีเมล)')
@@ -841,8 +908,7 @@ async function renderAuthBar() {
         `<a href="favorites.html">⭐ Favourite (${favCount})</a> · ` +
         `<a href="/auth/logout?from=${encodeURIComponent(location.pathname)}">Sign out</a>`;
     } else {
-      el.innerHTML = `<span>ยังไม่ได้เข้าสู่ระบบ</span> · ` +
-        `<a href="favorites.html">⭐ Favourite</a> · ` +
+      el.innerHTML = `<a href="favorites.html">⭐ Favourite</a> · ` +
         `<a href="login.html?from=${encodeURIComponent(location.pathname)}">เข้าสู่ระบบ</a>`;
     }
   } catch (e) {

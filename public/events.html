@@ -50,6 +50,21 @@
   </div>
 </div>
 
+<!-- First-arrival choice: join an event, or just manage Favourite songs -->
+<div class="modal-bg modal-center" id="entry-modal-bg" style="display:none;">
+  <div class="modal">
+    <h2 style="margin-top:0;">ยินดีต้อนรับ 👋</h2>
+    <div class="small-note" style="margin-bottom:10px;">เลือกก่อนว่าวันนี้จะทำอะไร</div>
+    <div class="section-title" style="margin-top:0;">🎤 เข้าร่วม Event</div>
+    <div id="entry-event-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;"></div>
+    <div class="section-title">หรือ ไม่เข้า Event ใดๆ</div>
+    <button class="btn-blue" id="entry-favs" style="width:100%;padding:12px 14px;">⭐ เข้ามาจัดการ Favourite Song เฉยๆ</button>
+    <div style="text-align:center;margin-top:12px;">
+      <a href="#" id="entry-organizer" class="small-note" style="text-decoration:underline;">สำหรับผู้จัดงาน: ไปหน้ารายการ Event (เพิ่ม/แก้ Event)</a>
+    </div>
+  </div>
+</div>
+
 <!-- Add / edit event modal -->
 <div class="modal-bg" id="event-modal-bg" style="display:none;">
   <div class="modal">
@@ -58,6 +73,18 @@
 
     <label>ชื่อ Event *</label>
     <input type="text" id="f-name" placeholder="เช่น ZyGen Outing 2026" />
+
+    <label style="display:flex;align-items:center;gap:8px;">โหมดของ Event
+      <button type="button" id="btn-mode-help" title="อธิบายโหมด" style="padding:0 9px;border-radius:50%;line-height:22px;">?</button>
+    </label>
+    <select id="f-mode" style="width:100%;">
+      <option value="approve">Approve First</option>
+      <option value="open">Everybody can set next show list</option>
+    </select>
+    <div id="mode-help" class="small-note" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:10px;line-height:1.6;">
+      <b>Approve First</b> — มีเมนู "Request List", "Next Show List", "Musician", "Admin" คนขอเพลงเข้า Request List ก่อน แล้ว Admin เป็นคนตรวจและจัดเพลงเข้า Next Show List (โหมดเดิมของเว็บ)<br><br>
+      <b>Everybody can set next show list</b> — ไม่ต้องมี Admin อนุมัติเพลง เหลือเมนู "Next Show List", "Musician", "Admin" เพลงที่ใครขอจะเข้า Next Show List ทันที ทุกคนกด "เล่นแล้ว", ย้ายขึ้น-ลง และนำออกจากคิวได้เองในหน้า Next Show List
+    </div>
 
     <label>วันที่ (ไม่บังคับ)</label>
     <input type="date" id="f-date" />
@@ -135,6 +162,7 @@ function renderEvents() {
         <h3 class="grow" style="margin-bottom:2px;">${escapeHtml(e.name)}</h3>
         ${isCurrent ? '<span class="badge strong">✓ Joined</span>' : ''}
       </div>
+      <div class="small-note" style="margin-bottom:4px;">โหมด: ${e.mode === 'open' ? 'Everybody can set next show list' : 'Approve First'}</div>
       ${dt ? `<div class="small-note" style="margin-bottom:6px;">${escapeHtml(dt)}</div>` : ''}
       ${e.location ? `<div class="artist" style="margin-bottom:2px;">📍 ${escapeHtml(e.location)}</div>` : ''}
       ${e.mapsUrl ? `<a href="${escapeHtml(e.mapsUrl)}" target="_blank" rel="noopener" class="link-out">🗺 เปิด Google Maps</a>` : ''}
@@ -151,17 +179,48 @@ function renderEvents() {
     </div>`;
   }).join('');
 
-  el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', async () => {
-    const e = events.find(x => x.id === b.dataset.join);
-    if (!e) return;
-    await confirmGuestNameForJoin();
-    setEvent(e.id, e.name);
-    location.href = 'index.html';
-  }));
+  el.querySelectorAll('button[data-join]').forEach(b => b.addEventListener('click', () => joinEvent(b.dataset.join)));
   el.querySelectorAll('button[data-edit]').forEach(b => b.addEventListener('click', () => {
     startAdminAction({ type: 'edit', id: b.dataset.edit });
   }));
 }
+
+async function joinEvent(id) {
+  const e = events.find(x => x.id === id);
+  if (!e) return;
+  if (!(await confirmGuestNameForJoin(e.name))) return; // Cancel = don't join
+  setEvent(e.id, e.name, e.mode);
+  try { sessionStorage.setItem('zg_entry_chosen', '1'); } catch (err) { /* fine */ }
+  location.href = e.mode === 'open' ? 'nextshow.html' : 'index.html';
+}
+
+// First arrival (no event joined yet, nothing chosen this visit): make the
+// person pick — join one of the events, or skip events and only manage their
+// Favourite songs — so nobody is left wondering what to do first.
+function maybeShowEntryChoice() {
+  let chosen = false;
+  try { chosen = !!sessionStorage.getItem('zg_entry_chosen'); } catch (err) { /* fine */ }
+  if (chosen || getEventId()) return;
+  const list = document.getElementById('entry-event-list');
+  list.innerHTML = events.length ? events.map(ev => {
+    const dt = fmtDateTime(ev);
+    return `<button class="entry-event-btn btn-blue" data-entry-join="${ev.id}">
+      <b>${escapeHtml(ev.name)}</b>
+      ${dt ? `<span class="small-note">${escapeHtml(dt)}</span>` : ''}
+    </button>`;
+  }).join('') : '<div class="small-note" style="text-align:center;padding:8px;">ยังไม่มี Event ในโหมดนี้</div>';
+  list.querySelectorAll('button[data-entry-join]').forEach(b => b.addEventListener('click', () => joinEvent(b.dataset.entryJoin)));
+  document.getElementById('entry-modal-bg').style.display = 'flex';
+}
+document.getElementById('entry-favs').addEventListener('click', () => {
+  try { sessionStorage.setItem('zg_entry_chosen', '1'); } catch (err) { /* fine */ }
+  location.href = 'favorites.html';
+});
+document.getElementById('entry-organizer').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  try { sessionStorage.setItem('zg_entry_chosen', '1'); } catch (err) { /* fine */ }
+  document.getElementById('entry-modal-bg').style.display = 'none';
+});
 
 async function loadEvents() {
   const res = await fetch('/api/events?scope=' + getMode());
@@ -229,6 +288,8 @@ function openEventForm(existing) {
   editingId = existing ? existing.id : null;
   document.getElementById('event-modal-title').textContent = existing ? 'แก้ไข Event' : 'เพิ่ม Event';
   document.getElementById('f-name').value = existing ? existing.name : '';
+  document.getElementById('f-mode').value = existing && existing.mode === 'open' ? 'open' : 'approve';
+  document.getElementById('mode-help').style.display = 'none';
   document.getElementById('f-date').value = existing ? existing.date : '';
   document.getElementById('f-timefrom').value = existing ? existing.timeFrom : '';
   document.getElementById('f-timeto').value = existing ? existing.timeTo : '';
@@ -273,6 +334,10 @@ async function performDelete(id) {
 }
 function closeEventForm() { document.getElementById('event-modal-bg').style.display = 'none'; }
 document.getElementById('event-modal-close').addEventListener('click', closeEventForm);
+document.getElementById('btn-mode-help').addEventListener('click', () => {
+  const h = document.getElementById('mode-help');
+  h.style.display = h.style.display === 'none' ? '' : 'none';
+});
 document.getElementById('event-modal-bg').addEventListener('click', (e) => { if (e.target.id === 'event-modal-bg') closeEventForm(); });
 
 document.getElementById('btn-add').addEventListener('click', () => startAdminAction('add'));
@@ -284,6 +349,7 @@ document.getElementById('btn-event-save').addEventListener('click', async () => 
     pin,
     scope: getMode(),
     name,
+    mode: document.getElementById('f-mode').value,
     date: document.getElementById('f-date').value,
     timeFrom: document.getElementById('f-timefrom').value,
     timeTo: document.getElementById('f-timeto').value,
@@ -310,7 +376,7 @@ document.getElementById('btn-event-save').addEventListener('click', async () => 
   showToast(editingId ? 'แก้ไข Event แล้ว ✓' : 'เพิ่ม Event แล้ว ✓');
   // If we're editing the event the person is currently joined into, keep
   // their local "current event" name in sync too.
-  if (editingId && getEventId() === editingId) setEvent(editingId, data.event.name);
+  if (editingId && getEventId() === editingId) setEvent(editingId, data.event.name, data.event.mode);
   await loadEvents();
 });
 
@@ -324,7 +390,7 @@ window.onLeaveEvent = renderEvents;
 renderEventHeader();
 renderAuthBar();
 document.getElementById('mode-chip').textContent = 'โหมด: ' + getModeLabel();
-loadEvents();
+loadEvents().then(maybeShowEntryChoice);
 </script>
 </body>
 </html>

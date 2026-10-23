@@ -990,3 +990,48 @@ body.theme-zygen .home-link { border-color: rgba(242, 133, 0, 0.7); color: #ffd9
 .reaction-float { position:fixed; bottom:0; z-index:90; font-size:42px; pointer-events:none; animation:rx-up 3s ease-out forwards; }
 @keyframes rx-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 @keyframes rx-up { from { opacity:1; transform:translateY(0) scale(.8); } to { opacity:0; transform:translateY(-70vh) scale(1.6); } }
+
+button.btn-blue { background: #3a8dff; color: #fff; border-color: #6aa8ff; font-weight: 600; }
+button.btn-blue.selected { background: #1f6fe0; box-shadow: 0 0 0 2px rgba(106,168,255,.6); }
+
+/* Split view list rows (musician.html): one-line title + artist on wide screens, 2nd line = requester / singers */
+.split-song-item .info { flex: 1; }
+.split-song-item .info .a-inline { display: none; font-weight: 400; color: var(--text-dim); }
+.split-song-item .info .sub { margin-top: 1px; }
+@media (min-width: 600px) {
+  .split-song-item .info .a-inline { display: inline; }
+  .split-song-item .info > .a:not(.sub) { display: none; }
+}
+select.mini-level { flex-shrink: 0; width: 26px; height: 26px; padding: 0; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; appearance: none; -webkit-appearance: none; color: transparent; background: var(--bg-card-2, #0b2347) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat; }
+select.mini-level option { color: #fff; background: #0b2347; }
+.mine-emoji { flex-shrink: 0; font-size: 16px; }
+
+.drag-handle { cursor: grab; user-select: none; -webkit-user-select: none; }
+.split-song-item.dragging { opacity: .7; background: var(--bg-card-2); outline: 2px dashed var(--accent); }
+.split-song-item.dragging .drag-handle { cursor: grabbing; }
+
+.split-song-item.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.split-song-item.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
+
+a.rv-link { color: var(--text-dim); text-decoration: none; }
+a.rv-link:hover { text-decoration: underline; }
+a.rv-link.on { color: var(--text, #fff); font-weight: 700; text-decoration: underline; }
+
+.entry-event-btn { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; text-align:left; padding:12px 14px; }
+
+/* Pop-up in the middle of the screen (instead of a bottom sheet) */
+.modal-bg.modal-center { align-items: center; padding: 16px; box-sizing: border-box; }
+.modal-bg.modal-center .modal { border-radius: 18px; border: 1px solid var(--border); max-height: 90vh; }
+.entry-event-btn .small-note { color: rgba(255,255,255,.85); margin: 0; }
+
+.join-name-chip { flex-shrink: 0; align-self: center; font-size: 0.85rem; color: var(--text-dim); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Playlists on the Favourite page */
+.pl-bar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.pl-chip { padding:6px 12px; border-radius:999px; font-size:0.9rem; }
+.pl-chip-new { border-style:dashed; }
+.pl-detail { margin-bottom:10px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:rgba(255,255,255,.04); }
+.pl-pick-list { max-height:50vh; overflow-y:auto; border:1px solid var(--border); border-radius:10px; padding:4px 8px; }
+.pl-pick-row { display:flex; align-items:flex-start; gap:10px; padding:8px 2px; border-bottom:1px solid rgba(255,255,255,.06); cursor:pointer; }
+.pl-pick-row:last-child { border-bottom:0; }
+.pl-pick-row input { margin-top:3px; }

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Public Playlist</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#021d44" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap"><h1>Public Playlist</h1></div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">👥 Playlist เพลงโปรดที่เพื่อนๆ เปิดเป็น Public</span>
+    <div class="auth-bar" id="auth-bar"></div>
+  </div>
+</header>
+
+<div class="wrap" id="normal-wrap">
+  <div id="login-prompt" class="card" style="display:none;text-align:center;">
+    ต้องเข้าสู่ระบบก่อนถึงจะดู Playlist ของเพื่อนได้<br><br>
+    <a class="btn primary" href="login.html?from=/friends.html">เข้าสู่ระบบ</a>
+  </div>
+
+  <div id="main" style="display:none;">
+    <div class="btn-row" style="margin-bottom:10px;">
+      <a class="btn" href="favorites.html" style="text-decoration:none;">← กลับไป Favourite ของฉัน</a>
+    </div>
+
+    <div id="detail" class="card" style="display:none;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <b id="d-title" style="flex:1;"></b>
+        <button id="d-close">✕ ปิด</button>
+      </div>
+      <div id="d-owner" class="small-note" style="margin:2px 0 8px;"></div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn-blue" id="d-addall">➕ เพิ่มทั้งหมดเข้า Favourite ของฉัน</button>
+        <button class="btn-blue" id="d-copypl">📥 คัดลอกเป็น Playlist ของฉัน</button>
+      </div>
+      <div id="d-songs"></div>
+    </div>
+
+    <input type="text" id="q" placeholder="🔍 ค้นหาชื่อเพื่อน / ชื่อ Playlist / ชื่อเพลง / ศิลปิน" style="margin-bottom:10px;" />
+    <div id="owners"><div class="empty">กำลังโหลด...</div></div>
+  </div>
+</div>
+
+<script src="/client-common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let owners = [];
+let cur = null; // { uid, pid }
+
+async function load() {
+  const me = await getMyAuth();
+  if (!me || !me.loggedIn) { $('login-prompt').style.display = ''; return; }
+  $('main').style.display = '';
+  const res = await fetch('/api/public-playlists');
+  owners = res.ok ? (await res.json()).owners : [];
+  renderOwners();
+}
+
+function renderOwners() {
+  const q = $('q').value.trim().toLowerCase();
+  const songHit = (s) => (s.title || '').toLowerCase().includes(q) || (s.artist || '').toLowerCase().includes(q);
+  const list = owners.map(o => ({
+    ...o,
+    playlists: o.playlists.filter(p => !q || o.ownerName.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.songs.some(songHit))
+      .map(p => ({ ...p, hits: q ? p.songs.filter(songHit).slice(0, 3) : [] })),
+  })).filter(o => o.playlists.length);
+  $('owners').innerHTML = list.length ? list.map(o => `
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:6px;">👤 ${escapeHtml(o.ownerName)}</div>
+      <div class="pl-bar" style="margin:0;">
+        ${o.playlists.map(p => `<button class="pl-chip ${cur && cur.pid === p.id ? 'selected' : ''}" data-uid="${o.userId}" data-pid="${p.id}">🌐 ${escapeHtml(p.name)} (${p.songCount})</button>`).join('')}
+      </div>
+      ${o.playlists.some(p => p.hits.length) ? `<div class="small-note" style="margin-top:6px;">${o.playlists.filter(p => p.hits.length).map(p => `🎵 ใน “${escapeHtml(p.name)}”: ${p.hits.map(h => escapeHtml(h.title + (h.artist ? ' — ' + h.artist : ''))).join(', ')}`).join('<br>')}</div>` : ''}
+    </div>`).join('')
+    : '<div class="empty">ยังไม่มีเพื่อนที่เปิด Playlist เป็น Public ' + (q ? '(ตามคำค้นหา)' : '— เมื่อเพื่อนตั้ง Playlist เป็น Public จะมาแสดงที่นี่') + '</div>';
+  $('owners').querySelectorAll('button[data-pid]').forEach(b => b.addEventListener('click', () => openPlaylist(b.dataset.uid, b.dataset.pid)));
+}
+$('q').addEventListener('input', renderOwners);
+
+async function openPlaylist(uid, pid) {
+  const res = await fetch(`/api/public-playlists/${encodeURIComponent(uid)}/${encodeURIComponent(pid)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || 'เปิด Playlist ไม่ได้'); load(); return; }
+  cur = { uid, pid };
+  $('d-title').textContent = '🌐 ' + data.name;
+  $('d-owner').textContent = 'ของ ' + data.ownerName + ' · ' + data.songs.length + ' เพลง';
+  $('d-songs').innerHTML = data.songs.map((s, i) => `
+    <div class="fav-card" style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:8px;">
+      <span class="order-num" style="flex-shrink:0;">${i + 1}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;">${escapeHtml(s.title)}</div>
+        <div class="small-note">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}${s.chordUrl ? ` · <a class="link-out" style="margin-top:0;" href="${escapeHtml(s.chordUrl)}" target="_blank" rel="noopener noreferrer">↗ ดูคอร์ด</a>` : ''}</div>
+      </div>
+      ${s.inMyFavourite
+        ? '<button class="btn-favshare-added" style="pointer-events:none;">✓ มีอยู่แล้ว</button>'
+        : `<button class="btn-favshare-add" data-idx="${i}">+ Add to My Favorite</button>`}
+    </div>`).join('');
+  $('d-songs').querySelectorAll('button[data-idx]').forEach(b => b.addEventListener('click', () => copy({ index: Number(b.dataset.idx) }, true)));
+  $('detail').style.display = '';
+  renderOwners();
+  $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function copy(body, reopen) {
+  if (!cur) return;
+  const res = await fetch(`/api/public-playlists/${encodeURIComponent(cur.uid)}/${encodeURIComponent(cur.pid)}/copy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || 'ทำรายการไม่สำเร็จ'); return; }
+  showToast(body.asPlaylist
+    ? `สร้าง Playlist ใหม่แล้ว ✓ (เพิ่มเพลงใหม่ ${data.added} เพลง)`
+    : data.added ? `เพิ่มเข้า Favourite แล้ว ${data.added} เพลง ✓` : 'มีเพลงนี้ใน Favourite อยู่แล้ว');
+  if (reopen) openPlaylist(cur.uid, cur.pid);
+}
+$('d-addall').addEventListener('click', () => copy({}, true));
+$('d-copypl').addEventListener('click', () => copy({ asPlaylist: true }, true));
+$('d-close').addEventListener('click', () => { cur = null; $('detail').style.display = 'none'; renderOwners(); });
+
+renderAuthBar();
+load();
+</script>
+</body>
+</html>

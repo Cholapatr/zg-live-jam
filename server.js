@@ -61,6 +61,14 @@ if (!db.users) db.users = [];
 if (!db.events) db.events = [];
 if (!db.inbox) db.inbox = [];
 if (!db.roles) db.roles = {}; // employeeId -> { musician: bool, djadmin: bool }
+// One-time tidy-up: older versions stored "ไม่ระบุ" as if it were an answer.
+// It now means "clear my answer", so drop any leftovers.
+(db.songs || []).forEach((sg) => {
+  Object.keys(sg.musicianResponses || {}).forEach((name) => {
+    const r = sg.musicianResponses[name];
+    if ((r && r.level === 'ไม่ระบุ') || r === 'ไม่ระบุ') delete sg.musicianResponses[name];
+  });
+});
 
 // Migration: songs created before multi-event support get grouped into one
 // auto-created "legacy" event, so no existing test data is silently lost or
@@ -103,11 +111,17 @@ function eventScope(e) {
   return e && e.scope === 'any' ? 'any' : 'zygen';
 }
 
+// 'approve' (default, original behaviour): requests wait in the Request List
+// for admin to curate the Next Show List. 'open': every request goes straight
+// into the Next Show List and anyone can reorder / remove / mark played.
+function eventMode(e) { return e && e.mode === 'open' ? 'open' : 'approve'; }
+
 function publicEvent(e) {
   return {
     id: e.id,
     name: e.name,
     scope: eventScope(e),
+    mode: eventMode(e),
     date: e.date || '',
     timeFrom: e.timeFrom || '',
     timeTo: e.timeTo || '',
@@ -268,7 +282,7 @@ function musicianSummary(song) {
   MUSICIAN_LEVELS.forEach((l) => (summary[l] = 0));
   Object.values(song.musicianResponses || {}).forEach((entry) => {
     const level = entry && entry.level ? entry.level : entry; // tolerate legacy plain-string data
-    if (summary[level] !== undefined) summary[level]++;
+    if (level !== 'ไม่ระบุ' && summary[level] !== undefined) summary[level]++;
   });
   return summary;
 }
@@ -286,7 +300,9 @@ function publicSong(song) {
   // Tolerate legacy musicianResponses where the value was a plain level string.
   const musicianResponses = {};
   Object.entries(song.musicianResponses || {}).forEach(([name, entry]) => {
-    musicianResponses[name] = entry && typeof entry === 'object' ? entry : { level: entry, role: '' };
+    const e = entry && typeof entry === 'object' ? entry : { level: entry, role: '' };
+    if (e.level === 'ไม่ระบุ') return; // "ไม่ระบุ" means no answer — never shown
+    musicianResponses[name] = e;
   });
   return {
     id: song.id,
@@ -489,6 +505,7 @@ app.get('/api/me', (req, res) => {
     loggedIn: true,
     user: { id: user.id, name: user.name, email: user.email, altEmails: user.altEmails || [], provider: user.provider },
     favorites: user.favorites || [],
+    playlists: userPlaylists(user),
     roles: userRoles(user),
     employeeDisplayName: employeeDisplayNameFor(user),
     providers: enabledProviderList(),
@@ -630,6 +647,142 @@ app.post('/api/favorites/:favId/remove', requireLogin, (req, res) => {
   req.user.favorites = (req.user.favorites || []).filter((f) => f.id !== req.params.favId);
   saveDb();
   res.json({ ok: true, favorites: req.user.favorites });
+});
+
+app.post('/api/playlists', requireLogin, (req, res) => {
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: 'ต้องใส่ชื่อ Playlist' });
+  if (!req.user.playlists) req.user.playlists = [];
+  if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
+  const visibility = req.body && req.body.visibility === 'public' ? 'public' : 'private';
+  const p = { id: newId(), name, visibility, songIds: [], createdAt: Date.now() };
+  req.user.playlists.push(p);
+  saveDb();
+  res.json({ ok: true, playlist: p, playlists: userPlaylists(req.user) });
+});
+
+app.post('/api/playlists/:pid/edit', requireLogin, (req, res) => {
+  const p = findPlaylist(req.user, req.params.pid);
+  if (!p) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+  const { name, visibility } = req.body || {};
+  if (name !== undefined) {
+    const n = String(name).trim().slice(0, 60);
+    if (!n) return res.status(400).json({ error: 'ต้องใส่ชื่อ Playlist' });
+    p.name = n;
+  }
+  if (visibility === 'public' || visibility === 'private') p.visibility = visibility;
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+app.post('/api/playlists/:pid/delete', requireLogin, (req, res) => {
+  if (!findPlaylist(req.user, req.params.pid)) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+  req.user.playlists = req.user.playlists.filter((p) => p.id !== req.params.pid);
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// Replace the songs of one playlist: favIds = the chosen favourites (order kept).
+app.post('/api/playlists/:pid/songs', requireLogin, (req, res) => {
+  const p = findPlaylist(req.user, req.params.pid);
+  if (!p) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+  const valid = new Set((req.user.favorites || []).map((f) => f.id));
+  const ids = Array.isArray(req.body && req.body.favIds) ? req.body.favIds : [];
+  p.songIds = [...new Set(ids.filter((id) => valid.has(id)))];
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// ---------- Public playlists of other people ----------
+// Only playlists their owner marked "public", only for signed-in people, and
+// only name / artist / chord link of the songs (never e-mail or anything else).
+function ownerDisplayName(u) {
+  return employeeDisplayNameFor(u) || u.name || 'ผู้ใช้';
+}
+function publicSongsOf(owner, pl) {
+  return pl.songIds.map((id) => (owner.favorites || []).find((f) => f.id === id)).filter(Boolean)
+    .map((f) => ({ title: f.title, artist: f.artist || '', chordUrl: f.chordUrl || '', chordId: f.chordId || '' }));
+}
+
+app.get('/api/public-playlists', requireLogin, (req, res) => {
+  const owners = [];
+  db.users.forEach((u) => {
+    if (u.id === req.user.id) return; // your own are in your Favourite page
+    const pls = userPlaylists(u).filter((p) => p.visibility === 'public' && p.songIds.length);
+    if (!pls.length) return;
+    owners.push({
+      userId: u.id,
+      ownerName: ownerDisplayName(u),
+      playlists: pls.map((p) => ({ id: p.id, name: p.name, songCount: p.songIds.length, songs: publicSongsOf(u, p).map((x) => ({ title: x.title, artist: x.artist })) })),
+    });
+  });
+  owners.sort((a, b) => a.ownerName.localeCompare(b.ownerName, 'th'));
+  res.json({ owners });
+});
+
+function findPublicPlaylist(userId, pid) {
+  const owner = db.users.find((u) => u.id === userId);
+  if (!owner) return null;
+  const pl = userPlaylists(owner).find((p) => p.id === pid && p.visibility === 'public');
+  return pl ? { owner, pl } : null;
+}
+
+app.get('/api/public-playlists/:uid/:pid', requireLogin, (req, res) => {
+  const found = findPublicPlaylist(req.params.uid, req.params.pid);
+  if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist นี้ (อาจถูกเปลี่ยนเป็น Private แล้ว)' });
+  const mine = new Set((req.user.favorites || []).map((f) => (f.title + '|' + (f.artist || '')).toLowerCase()));
+  const songs = publicSongsOf(found.owner, found.pl).map((s) => ({ ...s, inMyFavourite: mine.has((s.title + '|' + s.artist).toLowerCase()) }));
+  res.json({ ownerName: ownerDisplayName(found.owner), name: found.pl.name, songs });
+});
+
+// Copy songs from a friend's public playlist into MY Favourite.
+// body: { index } = one song · {} = all songs · { asPlaylist: true } = also make
+// a new playlist of mine with those songs.
+app.post('/api/public-playlists/:uid/:pid/copy', requireLogin, (req, res) => {
+  const found = findPublicPlaylist(req.params.uid, req.params.pid);
+  if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist นี้ (อาจถูกเปลี่ยนเป็น Private แล้ว)' });
+  let source = publicSongsOf(found.owner, found.pl);
+  const { index, asPlaylist } = req.body || {};
+  if (typeof index === 'number') {
+    if (!source[index]) return res.status(400).json({ error: 'ไม่พบเพลงนี้' });
+    source = [source[index]];
+  }
+  req.user.favorites = req.user.favorites || [];
+  const keyOf = (f) => (f.title + '|' + f.artist).toLowerCase();
+  const byKey = new Map(req.user.favorites.map((f) => [keyOf(f), f]));
+  let added = 0;
+  const idsForPlaylist = [];
+  source.forEach((f) => {
+    const key = keyOf(f);
+    let fav = byKey.get(key);
+    if (!fav) {
+      fav = { id: newId(), title: f.title, artist: f.artist, chordUrl: f.chordUrl, chordId: f.chordId, addedAt: Date.now() };
+      req.user.favorites.push(fav); byKey.set(key, fav); added++;
+    }
+    idsForPlaylist.push(fav.id);
+  });
+  let playlist = null;
+  if (asPlaylist) {
+    req.user.playlists = req.user.playlists || [];
+    if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
+    playlist = { id: newId(), name: (found.pl.name + ' (จาก ' + ownerDisplayName(found.owner) + ')').slice(0, 60), visibility: 'private', songIds: [...new Set(idsForPlaylist)], createdAt: Date.now() };
+    req.user.playlists.push(playlist);
+  }
+  saveDb();
+  res.json({ ok: true, added, playlistCreated: !!playlist });
+});
+
+// From a favourite's side: which playlists should this song be in?
+app.post('/api/favorites/:favId/playlists', requireLogin, (req, res) => {
+  if (!(req.user.favorites || []).some((f) => f.id === req.params.favId)) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
+  const want = new Set(Array.isArray(req.body && req.body.playlistIds) ? req.body.playlistIds : []);
+  (req.user.playlists || []).forEach((p) => {
+    const has = (p.songIds || []).includes(req.params.favId);
+    if (want.has(p.id) && !has) { p.songIds = (p.songIds || []).concat(req.params.favId); }
+    if (!want.has(p.id) && has) { p.songIds = p.songIds.filter((id) => id !== req.params.favId); }
+  });
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
 });
 
 // Lets a person drag/​reorder their own Favourite List into whatever order
@@ -818,6 +971,7 @@ app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
     song.votes[voteType].push({ clientId, name: requesterName, targetName: targetName || '' });
   }
   db.songs.push(song);
+  if (eventMode(findEvent(eventId)) === 'open') db.nextShow.push({ songId: song.id, played: false });
   saveDb();
   broadcast();
   if (clientId) {
@@ -880,6 +1034,7 @@ function readEventFields(body) {
     contactName: (contactName || '').trim(),
     contactEmail: (contactEmail || '').trim(),
     contactMobile: (contactMobile || '').trim(),
+    mode: body && body.mode === 'open' ? 'open' : (body && body.mode === 'approve' ? 'approve' : undefined),
   };
 }
 
@@ -887,7 +1042,7 @@ app.post('/api/admin/events', checkPin, (req, res) => {
   const fields = readEventFields(req.body);
   if (!fields.name) return res.status(400).json({ error: 'ต้องระบุชื่อ Event' });
   const scope = req.body && req.body.scope === 'any' ? 'any' : 'zygen';
-  const event = { id: newId(), ...fields, scope, createdAt: Date.now() };
+  const event = { id: newId(), ...fields, mode: fields.mode || 'approve', scope, createdAt: Date.now() };
   db.events.push(event);
   saveDb();
   broadcast();
@@ -899,6 +1054,7 @@ app.post('/api/admin/events/:id/edit', checkPin, (req, res) => {
   if (!event) return res.status(404).json({ error: 'ไม่พบ Event นี้' });
   const fields = readEventFields(req.body);
   if (!fields.name) return res.status(400).json({ error: 'ต้องระบุชื่อ Event' });
+  if (fields.mode === undefined) delete fields.mode; // keep the current mode if none was sent
   Object.assign(event, fields);
   saveDb();
   broadcast();
@@ -1038,6 +1194,7 @@ app.post('/api/songs', (req, res) => {
     song.votes[voteType].push({ clientId, name, targetName: targetName || '' });
   }
   db.songs.push(song);
+  if (eventMode(findEvent(eventId)) === 'open') db.nextShow.push({ songId: song.id, played: false }); // straight into the queue
   saveDb();
   broadcast();
   if (clientId) {
@@ -1147,7 +1304,12 @@ app.post('/api/songs/:id/musician-response', (req, res) => {
     return res.status(400).json({ error: 'ค่าการตอบรับไม่ถูกต้อง' });
   }
   if (!song.musicianResponses) song.musicianResponses = {};
-  song.musicianResponses[String(musicianName).trim()] = { level, role: (role || '').trim() };
+  if (level === 'ไม่ระบุ') {
+    // "ไม่ระบุ" = take my answer back, as if I never clicked
+    delete song.musicianResponses[String(musicianName).trim()];
+  } else {
+    song.musicianResponses[String(musicianName).trim()] = { level, role: (role || '').trim() };
+  }
   saveDb();
   broadcast();
   res.json({ ok: true, song: publicSong(song) });
@@ -1194,6 +1356,20 @@ function employeeDisplayNameFor(user) {
   if (nick && first && nick !== first) return `${nick} (${first})`;
   return nick || first;
 }
+// ---------- Playlists (per person; built from their own Favourite songs) ----------
+// user.playlists = [{ id, name, visibility: 'private'|'public', songIds: [favId…], createdAt }]
+// Public ones will later be browsable by friends (separate page, not built yet).
+const MAX_PLAYLISTS = 30;
+function userPlaylists(user) {
+  const favIds = new Set((user.favorites || []).map((f) => f.id));
+  return (user.playlists || []).map((p) => ({
+    id: p.id, name: p.name, visibility: p.visibility === 'public' ? 'public' : 'private',
+    songIds: (p.songIds || []).filter((id) => favIds.has(id)), // drop songs removed from Favourite
+    createdAt: p.createdAt,
+  }));
+}
+function findPlaylist(user, id) { return (user.playlists || []).find((p) => p.id === id); }
+
 function reqRoles(req) { return userRoles(getSessionUser(req)); }
 
 function requireDjAdminRole(req, res, next) {
@@ -1213,6 +1389,7 @@ function requestScope(req) {
   const q = req.query || {};
   const eid = b.eventId || q.eventId;
   let ev = eid ? findEvent(eid) : null;
+  if (!ev && b.songId) { const sg = findSong(b.songId); if (sg) ev = findEvent(sg.eventId); }
   if (!ev && req.params && req.params.id) {
     ev = findEvent(req.params.id);
     if (!ev) { const sg = findSong(req.params.id); if (sg) ev = findEvent(sg.eventId); }
@@ -1280,9 +1457,19 @@ app.post('/api/admin/roles/save', requireSuperAdmin, (req, res) => {
   res.json({ ok: true, saved: n });
 });
 
+// Queue edits (reorder / remove / played): PIN or DJ Admin as usual, EXCEPT in
+// "Everybody can set next show list" events, where anyone in the event may.
+function checkQueuePerm(req, res, next) {
+  const b = req.body || {};
+  let ev = b.eventId ? findEvent(b.eventId) : null;
+  if (!ev && b.songId) { const sg = findSong(b.songId); if (sg) ev = findEvent(sg.eventId); }
+  if (ev && eventMode(ev) === 'open') return next();
+  return checkPin(req, res, next);
+}
+
 // Replace the Next Show List order (array of songIds) for one event — admin
 // curates manually. Other events' queue entries are left untouched.
-app.post('/api/admin/next-show', checkPin, (req, res) => {
+app.post('/api/admin/next-show', checkQueuePerm, (req, res) => {
   const { order, eventId } = req.body || {};
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order ต้องเป็น array' });
   if (!eventId || !findEvent(eventId)) return res.status(400).json({ error: 'ไม่พบ Event นี้' });
@@ -1315,7 +1502,7 @@ app.post('/api/admin/next-show/add', checkPin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/admin/next-show/remove', checkPin, (req, res) => {
+app.post('/api/admin/next-show/remove', checkQueuePerm, (req, res) => {
   const { songId } = req.body || {};
   db.nextShow = db.nextShow.filter((i) => i.songId !== songId);
   saveDb();
@@ -1323,7 +1510,7 @@ app.post('/api/admin/next-show/remove', checkPin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/admin/next-show/played', checkPin, (req, res) => {
+app.post('/api/admin/next-show/played', checkQueuePerm, (req, res) => {
   const { songId, played } = req.body || {};
   const item = db.nextShow.find((i) => i.songId === songId);
   if (item) item.played = !!played;

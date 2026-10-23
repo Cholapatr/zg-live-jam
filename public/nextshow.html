@@ -78,12 +78,64 @@
   </div>
 </div>
 
+<datalist id="presence-names-list"></datalist>
+
+<!-- pick who to ask to sing ("ขอให้คนอื่นร้อง" quick vote) -->
+<div class="modal-bg" id="quicktarget-modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="quicktarget-modal-close">✕</button>
+    <h2>อยากขอให้ใครร้อง?</h2>
+    <label>ชื่อ (ไม่บังคับ)</label>
+    <input type="text" id="f-quicktarget" list="presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
+    <div class="btn-row" style="margin-top:14px;">
+      <button id="btn-quicktarget-skip" style="flex:1;">ไม่ระบุ</button>
+      <button class="primary" id="btn-quicktarget-ok" style="flex:1;">ตกลง</button>
+    </div>
+  </div>
+</div>
+
+<!-- "Everybody can set next show list" events only: request a song straight
+     into the queue (no Request List page in that mode). -->
+<button class="fab primary" id="btn-add" style="display:none;">＋ เสนอเพลง</button>
+<div class="modal-bg" id="modal-bg" style="display:none;">
+  <div class="modal">
+    <button class="close-x" id="modal-close">✕</button>
+    <h2>เสนอเพลง (เข้าคิวทันที)</h2>
+    <div class="section-title" style="margin-top:0;">1. หาเพลงจาก dochord (แนะนำ ได้คอร์ดพร้อมเล่นทันที)</div>
+    <button id="btn-open-dochord" style="width:100%;" type="button">🔍 เปิด dochord.com ค้นหาเพลง (แท็บใหม่)</button>
+    <label style="display:block; margin-top:10px;">เจอแล้ว ใส่ "หมายเลขเพลง" หรือวางลิงก์ก็ได้ (ไม่บังคับ)</label>
+    <input type="text" id="f-chordlink" placeholder="เช่น 378192 หรือ https://www.dochord.com/378192/" />
+    <div class="section-title">2. ชื่อเพลง</div>
+    <label>ชื่อเพลง *</label>
+    <input type="text" id="f-title" placeholder="เช่น กลัวว่าฉันจะไม่เสียใจ" />
+    <label>ศิลปิน</label>
+    <input type="text" id="f-artist" placeholder="เช่น Purpeech" />
+    <label style="display:block; margin-top:6px;">ชื่อคุณ (ไม่บังคับ)</label>
+    <input type="text" id="f-requester" placeholder="ใครเสนอ" />
+    <div class="section-title" style="margin-top:6px;">คุณอยากโหวตแบบไหน? (ไม่บังคับ)</div>
+    <div class="btn-row" id="vote-type-row">
+      <button data-vote="want">🙋 อยากฟัง</button>
+      <button data-vote="singMyself">🎤 อยากร้อง</button>
+      <button data-vote="requestOther">👉 ขอให้คนอื่นร้อง</button>
+    </div>
+    <div id="target-name-wrap" style="display:none; margin-top:8px;">
+      <label>อยากขอให้ใครร้อง? (ไม่บังคับ)</label>
+      <input type="text" id="f-target" list="presence-names-list" placeholder="พิมพ์ชื่อ หรือเลือกจากคนที่ join event อยู่" />
+    </div>
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="primary" id="btn-submit" style="flex:1;">ส่ง</button>
+    </div>
+  </div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script src="/client-common.js"></script>
 <script>
 let state = { songs: [], nextShow: [] };
 let currentChordSongId = null;
 let panelZoom = 1;
+const collapsedDetail = new Set(); // songs whose details the user folded (details are open by default)
+const isOpenMode = () => (state.event && state.event.mode === 'open');
 
 // "ขอให้คนอื่นร้อง" request boxes — same status colours/labels as admin.html.
 const REQUEST_STATUS_CLASS = {
@@ -253,12 +305,13 @@ function render() {
   const el = document.getElementById('nextshow-list');
   const list = state.nextShow.filter(i => !i.played);
   if (!list.length) {
-    el.innerHTML = '<div class="empty">ทีมงานยังไม่ได้จัดคิวเพลงถัดไป</div>';
+    el.innerHTML = '<div class="empty">' + (isOpenMode() ? 'ยังไม่มีเพลงในคิว — กด "＋ เสนอเพลง" ด้านล่างได้เลย' : 'ทีมงานยังไม่ได้จัดคิวเพลงถัดไป') + '</div>';
     closeChordPanel();
   } else {
   if (currentChordSongId && !list.some(i => i.song.id === currentChordSongId)) {
     closeChordPanel();
   }
+  const myVotes = getMyVotes();
   el.innerHTML = list.map((item, idx) => {
     const s = item.song;
     const musicians = Object.entries(s.musicianResponses || {});
@@ -269,19 +322,31 @@ function render() {
         <div class="grow">
           <h3 style="margin-bottom:0;">${escapeHtml(s.title)}</h3>
           <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+          <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
       </div>
       <div class="btn-row" style="margin-top:8px;">
-        <button data-chord="${s.id}" class="${currentChordSongId === s.id ? 'selected' : ''}">🎸 คอร์ดในนี้</button>
+        <button data-chord="${s.id}" class="btn-blue ${currentChordSongId === s.id ? 'selected' : ''}">🎵 ดูเนื้อเพลง</button>
         <button data-chord-newtab="${s.id}">↗ คอร์ดแยกแถบ</button>
       </div>
+      ${isOpenMode() ? `<div class="btn-row" style="margin-top:8px;">
+        <button data-qvote="${s.id}" data-vote="want" class="${myVotes[s.id] === 'want' ? 'selected' : ''}">🙋 อยากฟัง</button>
+        <button data-qvote="${s.id}" data-vote="singMyself" class="${myVotes[s.id] === 'singMyself' ? 'selected' : ''}">🎤 อยากร้อง</button>
+        <button data-qvote="${s.id}" data-vote="requestOther" class="${myVotes[s.id] === 'requestOther' ? 'selected' : ''}">👉 ขอให้คนอื่นร้อง</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button data-up="${s.id}" ${idx === 0 ? 'disabled' : ''}>▲</button>
+        <button data-down="${s.id}" ${idx === list.length - 1 ? 'disabled' : ''}>▼</button>
+        <button data-done="${s.id}" style="background:#fff3b0;color:#5c4a00;border-color:#e6d27a;">✅ เล่นแล้ว</button>
+        <button data-out="${s.id}" class="warn">🗑 ลบออกจากคิว</button>
+      </div>` : ''}
       <div class="badge-row" style="margin-top:8px;">
         <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
         <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>
         <span class="badge strong">👉 ขอให้ร้อง ${s.votes.requestOther}</span>
-        <button data-toggle="${s.id}" data-open="false" style="margin-left:auto;">+ รายละเอียด</button>
+        <button data-toggle="${s.id}" style="margin-left:auto;">${collapsedDetail.has(s.id) ? '+ รายละเอียด' : '− ยุบรายละเอียด'}</button>
       </div>
-      <div id="detail-${s.id}" style="display:none;">
+      <div id="detail-${s.id}" style="${collapsedDetail.has(s.id) ? 'display:none;' : ''}">
         ${s.votes.total > 0 ? `<div class="small-note">${voterListHtml(s.voters)}</div>` : '<div class="small-note">ยังไม่มีใครโหวตเพลงนี้</div>'}
         ${requestBoxesHtml(s.id)}
         ${musicians.length ? `
@@ -303,9 +368,25 @@ function render() {
       const box = document.getElementById('detail-' + btn.dataset.toggle);
       const nowOpen = box.style.display === 'none';
       box.style.display = nowOpen ? '' : 'none';
+      if (nowOpen) collapsedDetail.delete(btn.dataset.toggle); else collapsedDetail.add(btn.dataset.toggle);
       btn.textContent = nowOpen ? '− ยุบรายละเอียด' : '+ รายละเอียด';
     });
   });
+
+  if (isOpenMode()) {
+    el.querySelectorAll('button[data-qvote]').forEach(b => b.addEventListener('click', () => quickVote(b.dataset.qvote, b.dataset.vote)));
+    el.querySelectorAll('button[data-up]').forEach(b => b.addEventListener('click', () => reorderQueue(b.dataset.up, -1)));
+    el.querySelectorAll('button[data-down]').forEach(b => b.addEventListener('click', () => reorderQueue(b.dataset.down, 1)));
+    el.querySelectorAll('button[data-done]').forEach(b => b.addEventListener('click', async () => {
+      await queuePost('/api/admin/next-show/played', { songId: b.dataset.done, played: true });
+      showToast('บันทึกว่าเล่นแล้ว ✓');
+    }));
+    el.querySelectorAll('button[data-out]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('ลบเพลงนี้ออกจากคิวใช่หรือไม่?')) return;
+      await queuePost('/api/admin/next-show/remove', { songId: b.dataset.out });
+      showToast('ลบออกจากคิวแล้ว');
+    }));
+  }
 
   // Keep the open panel's title/link/note in sync if the song's data changed
   // (e.g. admin edited the chord link while the panel was open).
@@ -348,11 +429,143 @@ function renderPlayedShow() {
         <div class="grow">
           <h3 style="margin-bottom:0;">${escapeHtml(s.title)} ✅</h3>
           <div class="artist" style="margin-bottom:0;">${escapeHtml(s.artist || '')}</div>
+          <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
       </div>
+      ${isOpenMode() ? `<div class="btn-row" style="margin-top:8px;"><button data-undo="${s.id}">↩ ยังไม่เล่น</button></div>` : ''}
     </div>`;
   }).join('');
+  el.querySelectorAll('button[data-undo]').forEach(b => b.addEventListener('click', async () => {
+    await queuePost('/api/admin/next-show/played', { songId: b.dataset.undo, played: false });
+    showToast('ย้ายกลับเข้าคิวแล้ว');
+  }));
 }
+
+// ---- "Everybody can set next show list" mode: queue edits need no PIN ----
+async function queuePost(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(d.error || 'ทำรายการไม่สำเร็จ'); }
+  return res;
+}
+// Same rule as admin.html: reorder only inside the unplayed songs; played
+// ones are appended after so their played flag is kept.
+async function reorderQueue(songId, dir) {
+  const unplayed = state.nextShow.filter(i => !i.played).map(i => i.song.id);
+  const idx = unplayed.indexOf(songId);
+  const swapWith = idx + dir;
+  if (idx === -1 || swapWith < 0 || swapWith >= unplayed.length) return;
+  [unplayed[idx], unplayed[swapWith]] = [unplayed[swapWith], unplayed[idx]];
+  const playedIds = state.nextShow.filter(i => i.played).map(i => i.song.id);
+  await queuePost('/api/admin/next-show', { order: unplayed.concat(playedIds), eventId: getEventId() });
+}
+
+// ---- quick vote on a song already in the queue (same as Request List) ----
+const quicktargetModalBg = document.getElementById('quicktarget-modal-bg');
+let quicktargetResolve = null;
+function pickTargetName() {
+  return new Promise((resolve) => {
+    quicktargetResolve = resolve;
+    document.getElementById('f-quicktarget').value = '';
+    quicktargetModalBg.style.display = '';
+    document.getElementById('f-quicktarget').focus();
+  });
+}
+function closeQuicktargetModal(result) {
+  quicktargetModalBg.style.display = 'none';
+  if (quicktargetResolve) { quicktargetResolve(result); quicktargetResolve = null; }
+}
+document.getElementById('quicktarget-modal-close').addEventListener('click', () => closeQuicktargetModal(null));
+quicktargetModalBg.addEventListener('click', (e) => { if (e.target === quicktargetModalBg) closeQuicktargetModal(null); });
+document.getElementById('btn-quicktarget-skip').addEventListener('click', () => closeQuicktargetModal(''));
+document.getElementById('btn-quicktarget-ok').addEventListener('click', () => closeQuicktargetModal(document.getElementById('f-quicktarget').value.trim()));
+document.getElementById('f-quicktarget').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); closeQuicktargetModal(document.getElementById('f-quicktarget').value.trim()); }
+});
+async function quickVote(songId, voteType) {
+  const current = getMyVotes()[songId];
+  const nextType = current === voteType ? null : voteType; // click again to unvote
+  let targetName = '';
+  let voterName = '';
+  if (nextType) {
+    voterName = ensureGuestName();
+    if (nextType === 'requestOther') {
+      targetName = await pickTargetName();
+      if (targetName === null) return;
+    }
+  }
+  await fetch(`/api/songs/${songId}/vote`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: getClientId(), voteType: nextType, targetName, voterName }),
+  });
+  setMyVote(songId, nextType);
+  showToast('บันทึกโหวตแล้ว ✓');
+  render();
+}
+
+// ---- "Everybody can set next show list" mode: request a song into the queue ----
+let selectedVoteType = null;
+const modalBg = document.getElementById('modal-bg');
+document.getElementById('btn-add').addEventListener('click', () => openModal());
+document.getElementById('modal-close').addEventListener('click', closeModal);
+modalBg.addEventListener('click', (e) => { if (e.target === modalBg) closeModal(); });
+function openModal() {
+  selectedVoteType = null;
+  ['f-chordlink', 'f-title', 'f-artist', 'f-target'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('f-requester').value = getGuestName();
+  document.getElementById('target-name-wrap').style.display = 'none';
+  updateVoteButtons();
+  modalBg.style.display = 'flex';
+}
+function closeModal() { modalBg.style.display = 'none'; }
+document.getElementById('btn-open-dochord').addEventListener('click', () => window.open('https://www.dochord.com/', '_blank'));
+document.querySelectorAll('#vote-type-row button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    selectedVoteType = selectedVoteType === btn.dataset.vote ? null : btn.dataset.vote;
+    document.getElementById('target-name-wrap').style.display = selectedVoteType === 'requestOther' ? '' : 'none';
+    updateVoteButtons();
+  });
+});
+function updateVoteButtons() {
+  document.querySelectorAll('#vote-type-row button').forEach(btn => btn.classList.toggle('selected', btn.dataset.vote === selectedVoteType));
+}
+async function submitNewSong(confirmReplay) {
+  const title = document.getElementById('f-title').value.trim();
+  if (!title) { showToast('กรุณาใส่ชื่อเพลง'); return; }
+  const artist = document.getElementById('f-artist').value.trim();
+  const chordInput = document.getElementById('f-chordlink').value.trim();
+  let chordUrlValue = '';
+  if (chordInput) {
+    chordUrlValue = buildDochordUrl(chordInput) || '';
+    if (!chordUrlValue) { showToast('รูปแบบหมายเลข/ลิงก์ dochord ไม่ถูกต้อง ลองใหม่หรือเว้นว่างไว้'); return; }
+  }
+  const requestedBy = document.getElementById('f-requester').value.trim();
+  if (requestedBy) setGuestName(requestedBy);
+  const res = await fetch('/api/songs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title, artist, requestedBy, chordUrl: chordUrlValue, clientId: getClientId(),
+      voteType: selectedVoteType, voterName: requestedBy || getGuestName(),
+      targetName: document.getElementById('f-target').value.trim(),
+      eventId: getEventId(), confirmReplay: !!confirmReplay,
+    }),
+  });
+  const data = await res.json();
+  if (res.status === 409 && data.alreadyPlayed) {
+    const ex = data.existing;
+    if (confirm(`เพลง "${ex.title}"${ex.artist ? ' — ' + ex.artist : ''} เล่นไปแล้วในงานนี้\n\nเจตนาจะขอใหม่อีกรอบ (encore) ใช่หรือไม่?`)) await submitNewSong(true);
+    return;
+  }
+  if (res.status === 409 && data.existing) {
+    const ex = data.existing;
+    alert(`มีคนขอเพลงนี้ไปแล้ว (รหัสคอร์ดตรงกัน)\n\nชื่อเพลง: ${ex.title}\nศิลปิน: ${ex.artist || 'ไม่ระบุ'}\nเสนอโดย: ${ex.requestedBy || 'ไม่ระบุชื่อ'}`);
+    return;
+  }
+  if (!res.ok) { showToast(data.error || 'เสนอเพลงไม่สำเร็จ'); return; }
+  if (data.song && selectedVoteType) setMyVote(data.song.id, selectedVoteType);
+  closeModal();
+  showToast('เพลงเข้าคิวแล้ว 🎉');
+}
+document.getElementById('btn-submit').addEventListener('click', () => submitNewSong(false));
 
 async function loadState() {
   const eventId = getEventId();
@@ -360,8 +573,9 @@ async function loadState() {
   const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
   if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
   state = await res.json();
-  setEvent(state.event.id, state.event.name);
+  setEvent(state.event.id, state.event.name, state.event.mode);
   renderEventHeader();
+  document.getElementById('btn-add').style.display = isOpenMode() ? '' : 'none';
   await loadSongRequestStatus();
   render();
   updateNavCounts(state);

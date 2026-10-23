@@ -39,7 +39,7 @@
   </nav>
 </header>
 
-<div class="wrap">
+<div class="wrap" id="normal-wrap">
   <div id="name-card" class="card" style="display:none;">
     <label>ชื่อของคุณ (ใช้จำการตอบรับของคุณ)</label>
     <input type="text" id="f-my-name" placeholder="เช่น เอก" />
@@ -60,6 +60,39 @@
 
   <div class="section-title">Request List (เรียงตามคะแนนโหวตของผู้ฟัง)</div>
   <div id="song-list"><div class="empty">กำลังโหลด...</div></div>
+</div>
+
+<!-- Split view — shown once a chord is opened "ในนี้": left 80% chord
+     viewer, right 20% compact upcoming-songs list. -->
+<div id="split-layout" class="split-layout" style="display:none;">
+  <div class="split-left">
+    <div class="chord-panel-inner">
+      <div class="chord-panel-head">
+        <div class="grow">
+          <strong id="chord-panel-title"></strong>
+          <a id="chord-panel-openlink" class="link-out" href="#" target="_blank" rel="noopener" style="margin-top:2px;">เปิดในแท็บใหม่ ↗</a>
+        </div>
+        <div class="zoom-row" style="margin-top:0;">
+          <button id="chord-zoom-out">－</button>
+          <input type="number" id="chord-zoom-input" class="zoom-input" value="100" min="30" max="300" step="10" inputmode="numeric" />
+          <span class="zoom-label">%</span>
+          <button id="chord-zoom-in">＋</button>
+        </div>
+        <button id="chord-panel-close" title="ปิด กลับไปหน้ารายการ">✕ ปิด</button>
+      </div>
+      <div class="chord-frame-wrap" id="chord-frame-wrap">
+        <iframe id="chord-panel-frame" src="" loading="lazy"></iframe>
+      </div>
+      <div class="small-note" id="chord-panel-note"></div>
+    </div>
+  </div>
+  <div class="split-right">
+    <div class="split-right-head">
+      <span class="section-title" style="margin:0;" id="split-right-title"></span>
+      <button id="split-refresh-btn" title="รีเฟรชรายชื่อ (ไม่กระทบคอร์ดฝั่งซ้าย)">🔄</button>
+    </div>
+    <div id="split-song-list"></div>
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -157,7 +190,7 @@ function render() {
     return `
     <div class="card">
       <h3>${escapeHtml(s.title)}</h3>
-      <div class="artist">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')}${s.chordUrl ? ' · <a href="' + s.chordUrl + '" target="_blank" rel="noopener" class="link-out" style="margin-top:0;">🎸 ดูคอร์ด ↗</a>' : ' · <span style="color:#ffd166;">⚠️ ยังไม่มีคอร์ด</span>'}</div>
+      <div class="artist">${escapeHtml(s.artist || 'ไม่ระบุศิลปิน')} · 👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}${s.chordUrl ? ' · <button type="button" data-chordin="' + s.id + '" class="btn-blue' + (currentChordSongId === s.id ? ' selected' : '') + '" style="padding:2px 10px;">🎸 คอร์ดในนี้</button> <a href="' + escapeHtml(s.chordUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="padding:2px 10px;text-decoration:none;">↗ เปิดคอร์ดแยก</a>' : ' · <span style="color:#ffd166;">⚠️ ยังไม่มีคอร์ด</span>'}</div>
       <div class="badge-row">
         <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
         <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>
@@ -172,6 +205,7 @@ function render() {
     </div>`;
   }).join('');
 
+  el.querySelectorAll('button[data-chordin]').forEach(btn => btn.addEventListener('click', () => openChordPanel(btn.dataset.chordin)));
   el.querySelectorAll('button[data-level]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const name = getMyName();
@@ -193,6 +227,242 @@ function render() {
   });
 }
 
+// ---- "คอร์ดในนี้": same split view as Next Show List's "ดูเนื้อเพลง" —
+// chord on the left (zoomable), compact song list on the right. ----
+let currentChordSongId = null;
+let autoChordDone = false;
+let rightView = 'next'; // right-hand list: 'next' (up next) or 'played'
+let panelZoom = 1;
+const ZOOM_MIN = 30;
+const ZOOM_MAX = 300;
+const sortedSongs = () => [...state.songs].sort((a, b) => b.votes.total - a.votes.total || a.createdAt - b.createdAt);
+
+function applyPanelZoomSize() {
+  const wrap = document.getElementById('chord-frame-wrap');
+  const frame = document.getElementById('chord-panel-frame');
+  const rect = wrap.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  frame.style.width = (rect.width / panelZoom) + 'px';
+  frame.style.height = (rect.height / panelZoom) + 'px';
+  frame.style.zoom = panelZoom;
+}
+function setPanelZoom(value) {
+  panelZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value))) / 100;
+  document.getElementById('chord-zoom-input').value = Math.round(panelZoom * 100);
+  applyPanelZoomSize();
+}
+function openChordPanel(songId) {
+  const s = state.songs.find(x => x.id === songId);
+  if (!s || !s.chordUrl) return;
+  const wasOpen = !!currentChordSongId;
+  currentChordSongId = songId;
+  updateMusicianTab();
+  document.getElementById('normal-wrap').style.display = 'none';
+  document.getElementById('split-layout').style.display = '';
+  document.getElementById('chord-panel-title').textContent = s.title + (s.artist ? ' — ' + s.artist : '');
+  document.getElementById('chord-panel-openlink').href = s.chordUrl;
+  document.getElementById('chord-panel-note').textContent = 'ลิงก์เพลงนี้ใส่ไว้ตอนขอเพลง — ตรงเพลงแน่นอน';
+  document.getElementById('chord-panel-frame').src = s.chordUrl;
+  setPanelZoom(100);
+  if (!wasOpen) window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderSplitRightList();
+}
+function closeChordPanel() {
+  document.getElementById('split-layout').style.display = 'none';
+  document.getElementById('normal-wrap').style.display = '';
+  document.getElementById('chord-panel-frame').src = '';
+  currentChordSongId = null;
+  updateMusicianTab();
+  render();
+}
+// Right-hand list never touches the iframe, so refreshing it can't interrupt
+// the chord someone is reading.
+// People who'll sing it: those who voted "อยากร้อง" + people someone asked to sing.
+function singersOf(s) {
+  const v = s.voters || {};
+  const names = [...(v.singMyself || []), ...((v.requestOther || []).map(r => r.target).filter(Boolean))];
+  return [...new Set(names.filter(Boolean))];
+}
+// Musician's own quick answer (dropdown) from the song's responses.
+// Same as the buttons on Next Show List: mark played / remove from the queue.
+async function queueAction(songId, action, selectEl) {
+  const song = state.songs.find(x => x.id === songId);
+  if (action === '__remove' && !confirm(`ลบ "${song ? song.title : 'เพลงนี้'}" ออกจากคิวใช่หรือไม่?`)) { renderSplitRightList(); return; }
+  const url = action === '__remove' ? '/api/admin/next-show/remove' : '/api/admin/next-show/played';
+  const body = action === '__remove' ? { songId } : { songId, played: action === '__played' };
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(d.error || 'ทำรายการไม่สำเร็จ'); renderSplitRightList(); return; }
+  showToast(action === '__played' ? 'บันทึกว่าเล่นแล้ว ✓' : action === '__unplayed' ? 'ย้ายกลับเข้าคิวแล้ว' : 'ลบออกจากคิวแล้ว');
+  if (songId === currentChordSongId && action === '__remove') closeChordPanel();
+}
+async function saveMyLevel(songId, level, selectEl) {
+  const name = getMyName();
+  if (!name) { showToast('กรุณาใส่ชื่อก่อน'); selectEl.value = ''; return; }
+  if (!level) return;
+  await fetch(`/api/songs/${songId}/musician-response`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ musicianName: name, level, role: getMyRoles().join(', ') }),
+  });
+  showToast('บันทึกการตอบรับแล้ว ✓');
+}
+// ---- "Musician" tab toggles between the two views of this page ----
+// (List) = request list (default) · (Show Chord) = chord split view, opened on
+// the first song that has a chord.
+function updateMusicianTab() {
+  document.querySelectorAll('#event-nav a[href="musician.html"]').forEach(a => {
+    a.textContent = currentChordSongId ? '🎸 Musician (Show Chord)' : '🎸 Musician (List)';
+  });
+}
+function firstChordSongId() {
+  const list = isOpenEvent()
+    ? state.nextShow.filter(i => !i.played).map(i => i.song)
+    : sortedSongs();
+  const s = list.find(x => x.chordUrl);
+  return s ? s.id : null;
+}
+document.querySelectorAll('#event-nav a[href="musician.html"]').forEach(a => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (currentChordSongId) { closeChordPanel(); return; }
+    const id = firstChordSongId();
+    if (!id) { showToast('ยังไม่มีเพลงที่มีคอร์ด'); return; }
+    openChordPanel(id);
+  });
+});
+updateMusicianTab();
+
+function isOpenEvent() { return !!(state.event && state.event.mode === 'open'); }
+
+// ---- drag & drop re-ordering of the queue (pointer events: mouse AND touch) ----
+// The rows themselves are never moved while dragging (moving a DOM node drops
+// pointer capture and the drop would be lost) — a green line shows where the
+// song will land, and the new order is applied when the pointer is released.
+let dragging = false;
+let lastDragEnd = 0;
+function makeSortable(container, onChange) {
+  const rows = () => [...container.querySelectorAll('[data-split-song]')];
+  const clearMarks = () => rows().forEach(r => r.classList.remove('drop-before', 'drop-after'));
+  container.querySelectorAll('.drag-handle').forEach(handle => {
+    handle.style.touchAction = 'none';
+    handle.addEventListener('pointerdown', (ev) => {
+      const row = handle.closest('[data-split-song]');
+      if (!row) return;
+      ev.preventDefault();
+      dragging = true;
+      row.classList.add('dragging');
+      handle.setPointerCapture(ev.pointerId);
+      let target = null, before = true;
+      const move = (e) => {
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        const t = under && under.closest && under.closest('[data-split-song]');
+        clearMarks();
+        if (!t || t === row || !container.contains(t)) { target = null; return; }
+        const r = t.getBoundingClientRect();
+        target = t;
+        before = e.clientY < r.top + r.height / 2;
+        t.classList.add(before ? 'drop-before' : 'drop-after');
+      };
+      const up = () => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+        clearMarks();
+        row.classList.remove('dragging');
+        dragging = false;
+        lastDragEnd = Date.now();
+        if (!target) return;
+        const ids = rows().map(r => r.dataset.splitSong).filter(id => id !== row.dataset.splitSong);
+        const at = ids.indexOf(target.dataset.splitSong);
+        ids.splice(before ? at : at + 1, 0, row.dataset.splitSong);
+        const old = rows().map(r => r.dataset.splitSong).join(',');
+        if (ids.join(',') !== old) onChange(ids);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
+  });
+}
+// New queue order = the dragged unplayed songs, then the already-played ones
+// (kept after so their played flag survives, same rule as nextshow/admin).
+async function saveQueueOrder(ids) {
+  const playedIds = state.nextShow.filter(i => i.played).map(i => i.song.id);
+  const res = await fetch('/api/admin/next-show', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order: ids.concat(playedIds), eventId: getEventId() }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(d.error || 'จัดลำดับไม่สำเร็จ'); renderSplitRightList(); return; }
+  showToast('จัดลำดับคิวแล้ว ✓');
+}
+
+function renderSplitRightList() {
+  if (dragging) return; // don't rebuild the list under a drag in progress
+  const el = document.getElementById('split-song-list');
+  // "Everybody can set next show list" events: this list IS the queue (queue
+  // order, drag the number to re-order). Approve First: requests by votes.
+  const open = isOpenEvent();
+  const played = rightView === 'played';
+  const list = played
+    ? state.nextShow.filter(i => i.played).map(i => i.song)
+    : (open ? state.nextShow.filter(i => !i.played).map(i => i.song) : sortedSongs().filter(s => s.chordUrl));
+  // Header = two text links that toggle this list: next songs | already played.
+  const title = document.getElementById('split-right-title');
+  title.innerHTML = `🎵 <a href="#" data-rv="next" class="rv-link ${played ? '' : 'on'}">${open ? 'เพลงต่อไป' : 'เพลงที่ขอ'}</a> | <a href="#" data-rv="played" class="rv-link ${played ? 'on' : ''}">เล่นไปแล้ว</a>`;
+  title.querySelectorAll('a[data-rv]').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    rightView = a.dataset.rv;
+    renderSplitRightList();
+  }));
+  const canDrag = open && !played;
+  if (!list.length) { el.innerHTML = '<div class="empty" style="padding:16px 4px;">' + (played ? 'ยังไม่มีเพลงที่เล่นไปแล้ว' : (open ? 'ไม่มีเพลงในคิว' : 'ไม่มีเพลงที่มีคอร์ด')) + '</div>'; return; }
+  const myName = getMyName();
+  el.innerHTML = list.map((s, idx) => {
+    const mine = myName && s.musicianResponses[myName] ? s.musicianResponses[myName].level : '';
+    const singers = singersOf(s);
+    return `
+    <div class="split-song-item ${s.id === currentChordSongId ? 'active' : ''}" data-split-song="${s.id}" ${s.chordUrl ? '' : 'style="opacity:.55;"'}>
+      <span class="order-num ${canDrag ? 'drag-handle' : ''}" ${canDrag ? 'title="กดค้างแล้วลากเพื่อเปลี่ยนลำดับ"' : ''}>${played ? '✅' : idx + 1}</span>
+      <div class="info">
+        <div class="t">${escapeHtml(s.title)}${s.artist ? `<span class="a-inline"> ${escapeHtml(s.artist)}</span>` : ''}</div>
+        <div class="a">${escapeHtml(s.artist || '')}</div>
+        <div class="a sub">👤 ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}${singers.length ? ' · 🎤 ' + singers.map(escapeHtml).join(', ') : ''}</div>
+      </div>
+      ${mine ? `<span class="mine-emoji" title="คุณตอบ: ${escapeHtml(mine)}">${(LEVELS.find(l => l.key === mine) || {}).emoji || ''}</span>` : ''}
+      <select class="mini-level" data-level-song="${s.id}" title="ตอบรับเพลงนี้${mine ? ' (ตอนนี้: ' + escapeHtml(mine) + ')' : ''}">
+        <option value=""></option>
+        ${LEVELS.map(l => `<option value="${l.key}" ${mine === l.key ? 'selected' : ''}>${l.emoji} ${l.key}</option>`).join('')}
+        ${played ? `<option disabled>──────────</option>
+        <option value="__unplayed">↩ ยังไม่เล่น (กลับเข้าคิว)</option>` : (open ? `<option disabled>──────────</option>
+        <option value="__played">✅ เล่นไปแล้ว</option>
+        <option value="__remove">🗑 ลบออกจากคิว</option>` : '')}
+      </select>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-split-song]').forEach(row => row.addEventListener('click', () => {
+    if (Date.now() - lastDragEnd < 300) return; // the click that ends a drag
+    const s = state.songs.find(x => x.id === row.dataset.splitSong);
+    if (!s || !s.chordUrl) { showToast('เพลงนี้ยังไม่มีคอร์ด'); return; }
+    openChordPanel(row.dataset.splitSong);
+  }));
+  if (canDrag) makeSortable(el, saveQueueOrder);
+  el.querySelectorAll('select[data-level-song]').forEach(sel => {
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (sel.value === '__played' || sel.value === '__remove' || sel.value === '__unplayed') queueAction(sel.dataset.levelSong, sel.value, sel);
+      else saveMyLevel(sel.dataset.levelSong, sel.value, sel);
+    });
+  });
+}
+document.getElementById('chord-panel-close').addEventListener('click', closeChordPanel);
+document.getElementById('chord-zoom-in').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) + 10));
+document.getElementById('chord-zoom-out').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) - 10));
+document.getElementById('split-refresh-btn').addEventListener('click', () => loadState());
+const zoomInputEl = document.getElementById('chord-zoom-input');
+zoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(zoomInputEl.value) || 100));
+zoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(zoomInputEl.value) || 100); zoomInputEl.blur(); } });
+window.addEventListener('resize', () => { if (currentChordSongId) applyPanelZoomSize(); });
+
 async function loadState() {
   const eventId = getEventId();
   if (!eventId) return; // requireEvent() below is already redirecting to events.html
@@ -207,10 +477,25 @@ async function loadState() {
   const res = await fetch(`/api/state?eventId=${encodeURIComponent(eventId)}`);
   if (res.status === 404) { clearEvent(); location.href = 'events.html'; return; }
   state = await res.json();
-  setEvent(state.event.id, state.event.name);
+  setEvent(state.event.id, state.event.name, state.event.mode);
   renderEventHeader();
+  if (currentChordSongId && !state.songs.some(s => s.id === currentChordSongId && s.chordUrl)) {
+    document.getElementById('split-layout').style.display = 'none';
+    document.getElementById('normal-wrap').style.display = '';
+    document.getElementById('chord-panel-frame').src = '';
+    currentChordSongId = null;
+    updateMusicianTab();
+  }
   render();
+  if (currentChordSongId) renderSplitRightList();
   updateNavCounts(state);
+  // Entering the Musician page starts in Show Chord mode (first song with a
+  // chord). Only once per visit, so later updates never override the tab toggle.
+  if (!autoChordDone && !currentChordSongId) {
+    autoChordDone = true;
+    const id = firstChordSongId();
+    if (id) openChordPanel(id);
+  }
 }
 
 const socket = io();
