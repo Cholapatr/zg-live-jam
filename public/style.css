@@ -974,7 +974,7 @@ body.theme-zygen .home-link { border-color: rgba(242, 133, 0, 0.7); color: #ffd9
 .emp-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .emp-filters input, .emp-filters select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: inherit; }
 /* Wide pages (Master Data): use the full screen on desktop/tablet */
-@media (min-width: 700px) { .wrap.wrap-wide { max-width: 60vw; padding: 16px 24px; } }
+
 
 .logo-menu-who { padding: 8px 14px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); max-width: 240px; white-space: normal; word-break: break-all; }
 
@@ -1045,3 +1045,29 @@ body.is-history button[data-edit], body.is-history button[data-del],
 body.is-history button[data-level], body.is-history select.mini-level, body.is-history .mine-emoji { display: none !important; }
 body.is-history .drag-handle { pointer-events: none; }
 button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-weight: 600; }
+
+.spotify-block{margin-top:10px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn-spotify-link{display:inline-block;background:#1db954;color:#06210f;font-weight:700;padding:8px 14px;border-radius:999px;text-decoration:none}
+.spotify-code{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.spotify-code img{width:240px;max-width:100%;border-radius:10px;display:block}
+
+/* Responsive width: phones stay compact; tablets / PCs use ~70% of the screen (split chord view = 94%,
+   wide data tables such as Master Data = 85%). */
+@media (min-width: 700px) {
+  .wrap { max-width: max(70vw, 640px); padding: 16px 24px; }
+  .wrap.wrap-wide { max-width: 85vw; }
+  .split-layout { max-width: 94vw; }
+  header.top { padding-left: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); padding-right: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); }
+}
+@media (min-width: 1000px) {
+  #event-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 0 16px; align-items: start; }
+  #event-list > .section-title { grid-column: 1 / -1; }
+  #event-list > .empty { grid-column: 1 / -1; }
+}
+
+/* Wide screens: all action buttons of a queue item flow on one line (wrapping only if needed). */
+@media (min-width: 700px) {
+  .q-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .q-actions > .btn-row { display: contents; }
+  .q-actions > .btn-row > button { margin: 0; }
+}

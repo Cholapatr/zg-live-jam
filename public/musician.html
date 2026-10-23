@@ -455,12 +455,6 @@ function renderSplitRightList() {
   });
 }
 document.getElementById('chord-panel-close').addEventListener('click', closeChordPanel);
-document.getElementById('chord-zoom-in').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) + 10));
-document.getElementById('chord-zoom-out').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) - 10));
-document.getElementById('split-refresh-btn').addEventListener('click', () => loadState());
-const zoomInputEl = document.getElementById('chord-zoom-input');
-zoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(zoomInputEl.value) || 100));
-zoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(zoomInputEl.value) || 100); zoomInputEl.blur(); } });
 window.addEventListener('resize', () => { if (currentChordSongId) applyPanelZoomSize(); });
 
 async function loadState() {

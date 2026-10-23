@@ -152,7 +152,10 @@
       <button type="button" data-vis="private">🔒 Private (เห็นคนเดียว)</button>
       <button type="button" data-vis="public">🌐 Public (เพื่อนดูได้)</button>
     </div>
-    <div class="small-note" style="margin-top:6px;">Public: ภายหลังเพื่อนจะเปิดดู Playlist นี้ได้จากหน้าสำหรับดูเพลงโปรดของเพื่อน (กำลังจะมี)</div>
+    <div class="small-note" style="margin-top:6px;">Public: เพื่อนๆ เปิดดู Playlist นี้ได้จากหน้า Public Playlist</div>
+    <label style="display:block;margin-top:8px;">🎧 Spotify Playlist link (ถ้ามี)</label>
+    <input type="text" id="pl-spotify" placeholder="https://open.spotify.com/playlist/…" />
+    <div class="small-note" style="margin-top:4px;">ถ้าขอให้ Admin สร้าง Playlist บน Spotify ให้ ลิงก์จะมาแปะที่นี่อัตโนมัติ</div>
     <div class="btn-row" style="margin-top:14px;">
       <button id="pl-cancel" style="flex:1;">ยกเลิก</button>
       <button class="btn-blue" id="pl-save" style="flex:1;">บันทึก</button>
@@ -412,11 +415,13 @@ function renderPlaylistBar() {
   det.style.display = '';
   det.innerHTML = `
     <div class="pl-detail-head"><b>${escapeHtml(p.name)}</b> <span class="small-note">· ${VIS_LABEL[p.visibility]}</span></div>
-    <div class="btn-row" style="margin-top:6px;">
-      <button class="btn-blue" id="pl-pick">🎵 เลือกเพลงใน Playlist</button>
-      <button id="pl-edit">✏️ แก้ไขชื่อ / การมองเห็น</button>
+    <div class="btn-row pl-actions" style="margin-top:6px;">
+      <button id="pl-pick">🎵 เพิ่มเพลงจาก Fav</button>
+      <button id="pl-edit">✏️ แก้ไข Playlist</button>
       <button class="warn" id="pl-del">🗑 ลบ Playlist</button>
-    </div>`;
+      ${p.spotifyUrl ? `<a class="btn-spotify-link" href="${escapeHtml(p.spotifyUrl)}" target="_blank" rel="noopener noreferrer">🎧 เปิดใน Spotify</a>` : ''}
+    </div>
+    ${p.spotifyUrl ? spotifyBlockHtml(p.spotifyUrl, true) : '<div class="small-note" style="margin-top:8px;">🎧 ยังไม่มีลิงก์ Spotify — กด ✏️ แก้ไข Playlist เพื่อแปะลิงก์ได้</div>'}`;
   document.getElementById('pl-pick').addEventListener('click', () => openPlSongsModal(p.id));
   document.getElementById('pl-edit').addEventListener('click', () => openPlModal(p));
   document.getElementById('pl-del').addEventListener('click', async () => {
@@ -441,6 +446,7 @@ function openPlModal(p, afterSave) {
   plVis = p ? p.visibility : 'private';
   document.getElementById('pl-modal-title').textContent = p ? 'แก้ไข Playlist' : 'Playlist ใหม่';
   document.getElementById('pl-name').value = p ? p.name : '';
+  document.getElementById('pl-spotify').value = p ? (p.spotifyUrl || '') : '';
   paintPlVis();
   document.getElementById('pl-modal-bg').style.display = 'flex';
   document.getElementById('pl-name').focus();
@@ -457,8 +463,8 @@ document.getElementById('pl-save').addEventListener('click', async () => {
   const name = document.getElementById('pl-name').value.trim();
   if (!name) { showToast('กรุณาใส่ชื่อ Playlist'); return; }
   const data = plEditingId
-    ? await plApi(`/api/playlists/${plEditingId}/edit`, { name, visibility: plVis })
-    : await plApi('/api/playlists', { name, visibility: plVis });
+    ? await plApi(`/api/playlists/${plEditingId}/edit`, { name, visibility: plVis, spotifyUrl: document.getElementById('pl-spotify').value.trim() })
+    : await plApi('/api/playlists', { name, visibility: plVis, spotifyUrl: document.getElementById('pl-spotify').value.trim() });
   if (!data) return;
   playlists = data.playlists;
   closePlModal();

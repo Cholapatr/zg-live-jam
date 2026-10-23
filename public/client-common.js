@@ -880,6 +880,7 @@ function initPageChrome() {
       const r = (me && me.roles) || {};
       if (getMode() === 'zygen' && r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="employees.html">🗂 Master Data</a>');
       if (getMode() === 'zygen' && r.superadmin) menu.insertAdjacentHTML('beforeend', '<a href="role.html">🔑 Role</a>');
+      if (r.djadmin) menu.insertAdjacentHTML('beforeend', '<a href="spotify.html">🎧 Spotify Playlist</a>');
       menu.insertAdjacentHTML('beforeend', '<a href="friends.html">👥 Public Playlist</a>');
       menu.insertAdjacentHTML('beforeend', '<a href="live.html">🔴 Live Broadcast</a>');
       menu.insertAdjacentHTML('beforeend', '<div class="logo-menu-who">' + (me && me.loggedIn
@@ -962,4 +963,19 @@ function showToast(msg) {
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+
+// Spotify block for a playlist: (link button) + scannable Spotify Code image + save button.
+// The image comes through our server; if that fails the browser tries Spotify directly.
+function spotifyBlockHtml(url, noLink) {
+  const m = String(url || '').match(/playlist\/([A-Za-z0-9]{22})/);
+  if (!m) return '';
+  const id = m[1];
+  const direct = 'https://scannables.scdn.co/uri/plain/png/021d44/white/640/spotify:playlist:' + id;
+  const fail = "if(!this.dataset.t){this.dataset.t=1;this.src='" + direct + "';}else{this.parentNode.innerHTML='<span class=\\'small-note\\'>โหลดรูป Spotify Code ไม่ได้ในตอนนี้</span>';}";
+  return '<div class="spotify-block">' +
+    (noLink ? '' : '<a class="btn-spotify-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">🎧 เปิดใน Spotify</a>') +
+    '<div class="spotify-code"><img src="/api/spotify-code/' + id + '" alt="Spotify Code" onerror="' + fail + '" />' +
+    '<a class="link-out" href="/api/spotify-code/' + id + '?dl=1" download="spotify-code.png">⬇ บันทึกรูป Spotify Code</a></div></div>';
 }

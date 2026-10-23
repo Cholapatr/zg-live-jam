@@ -293,12 +293,6 @@ function renderSplitRightList() {
 }
 
 document.getElementById('chord-panel-close').addEventListener('click', closeChordPanel);
-document.getElementById('chord-zoom-in').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) + 10));
-document.getElementById('chord-zoom-out').addEventListener('click', () => setPanelZoom(Math.round(panelZoom * 100) - 10));
-document.getElementById('split-refresh-btn').addEventListener('click', () => loadState());
-const zoomInputEl = document.getElementById('chord-zoom-input');
-zoomInputEl.addEventListener('change', () => setPanelZoom(parseFloat(zoomInputEl.value) || 100));
-zoomInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { setPanelZoom(parseFloat(zoomInputEl.value) || 100); zoomInputEl.blur(); } });
 window.addEventListener('resize', () => { if (currentChordSongId) applyPanelZoomSize(); });
 
 function render() {
@@ -325,6 +319,7 @@ function render() {
           <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
       </div>
+      <div class="q-actions">
       <div class="btn-row" style="margin-top:8px;">
         <button data-chord="${s.id}" class="btn-blue ${currentChordSongId === s.id ? 'selected' : ''}">🎵 ดูเนื้อเพลง</button>
         <button data-chord-newtab="${s.id}">↗ คอร์ดแยกแถบ</button>
@@ -340,6 +335,7 @@ function render() {
         <button data-done="${s.id}" style="background:#fff3b0;color:#5c4a00;border-color:#e6d27a;">✅ เล่นแล้ว</button>
         <button data-out="${s.id}" class="warn">🗑 ลบออกจากคิว</button>
       </div>` : ''}
+      </div>
       <div class="badge-row" style="margin-top:8px;">
         <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
         <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>

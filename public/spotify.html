@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>ZG Live Jam — Spotify Playlist</title>
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#021d44" />
+<link rel="stylesheet" href="/style.css" />
+<style>
+  .sp-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap}
+  .sp-row .grow{flex:1;min-width:160px}
+  .sp-item{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+  .sp-item select{width:100%;margin-top:4px}
+  .sp-miss{color:#ffb4b4}
+  .btn-spotify{background:#1db954;color:#06210f;border-color:#1db954;font-weight:700}
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<header class="top">
+  <div class="brand-row">
+    <div class="event-title-wrap"><h1>Spotify Playlist</h1></div>
+    <img class="brand-logo" src="/assets/logo-zygen.png" alt="ZyGen" />
+  </div>
+  <div class="info-row">
+    <span class="page-label">🎧 สร้าง Spotify Playlist จาก Public Playlist</span>
+    <a href="events.html" class="leave-link">← กลับ</a>
+  </div>
+</header>
+<div class="wrap wrap-wide">
+  <div class="card" id="denied" style="display:none">หน้านี้ใช้ได้เฉพาะผู้ที่มีสิทธิ์ DJ Admin (กรุณาเข้าสู่ระบบด้วยอีเมลบริษัท)</div>
+  <div id="main" style="display:none">
+    <div class="card" id="conn"></div>
+    <div class="card" id="list-card"><h3>Public Playlist ที่มีคนเปิดไว้</h3><div id="list"></div></div>
+    <div class="card" id="prev-card" style="display:none">
+      <h3 id="p-title"></h3>
+      <div class="small-note" id="p-sub"></div>
+      <label style="display:block;margin-top:8px;">ชื่อ Playlist บน Spotify</label>
+      <input id="p-name" style="width:100%;" maxlength="100" />
+      <div id="p-items" style="margin-top:8px;"></div>
+      <div class="btn-row" style="margin-top:12px;">
+        <button id="p-create" class="btn-spotify" style="flex:1;">🎧 สร้างบน Spotify</button>
+        <button id="p-cancel">ยกเลิก</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/client-common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let status = null, cur = null, matched = null;
+
+async function api(url, body) {
+  const res = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function renderConn() {
+  const s = status;
+  let h = '<h3>🔌 การเชื่อมต่อ Spotify</h3>';
+  if (!s.configured) {
+    h += `<div class="small-note">ยังไม่ได้ตั้งค่า — ใส่ <b>SPOTIFY_CLIENT_ID</b> และ <b>SPOTIFY_CLIENT_SECRET</b> ใน .env แล้ว restart server<br>Redirect URI ที่ต้องตั้งใน Spotify Dashboard: <code>${escapeHtml(s.redirectUri)}</code></div>`;
+  } else if (!s.connected) {
+    h += '<div class="small-note">ยังไม่ได้เชื่อมต่อบัญชี Spotify (ต้องเป็น Premium)</div>' +
+      (s.superadmin ? '<div style="margin-top:8px;"><a class="btn-spotify" style="display:inline-block;padding:8px 14px;border-radius:8px;text-decoration:none;" href="/auth/spotify/connect">Connect Spotify</a></div>' : '<div class="small-note">ให้ Super Admin เป็นผู้กด Connect</div>');
+  } else {
+    h += `<div>✅ เชื่อมต่อแล้ว: <b>${escapeHtml(s.accountName || 'Spotify')}</b></div>` +
+      (s.superadmin ? '<div style="margin-top:6px;"><a class="link-out" style="margin-top:0;" href="/auth/spotify/connect">เชื่อมต่อใหม่ / เปลี่ยนบัญชี</a></div>' : '');
+  }
+  $('conn').innerHTML = h;
+}
+
+async function loadList() {
+  const r = await api('/api/spotify/playlists');
+  const pls = (r.data && r.data.playlists) || [];
+  $('list').innerHTML = pls.length ? pls.map((p, i) => `
+    <div class="sp-row">
+      <div class="grow"><b>${escapeHtml(p.name)}</b> <span class="small-note">(${p.songCount} เพลง) · ของ ${escapeHtml(p.ownerName)}</span>
+        ${p.spotifyUrl ? `<div><a class="link-out" style="margin-top:0;" href="${escapeHtml(p.spotifyUrl)}" target="_blank" rel="noopener">🎧 เปิด Spotify Playlist</a> · <a class="link-out" style="margin-top:0;" href="/api/spotify-code/${(p.spotifyUrl.match(/playlist\/([A-Za-z0-9]{22})/)||[])[1]}?dl=1" download>⬇ Spotify Code</a></div>` : ''}
+      </div>
+      <button class="btn-spotify" data-gen="${i}" ${status.connected ? '' : 'disabled'}>${p.spotifyUrl ? '🔄 สร้างใหม่' : '🎧 สร้าง'}</button>
+      <button data-link="${i}">🔗 แปะลิงก์เอง</button>
+    </div>`).join('') : '<div class="small-note">ยังไม่มีใครตั้ง Playlist เป็น Public</div>';
+  $('list').querySelectorAll('button[data-gen]').forEach(b => b.addEventListener('click', () => generate(pls[b.dataset.gen])));
+  $('list').querySelectorAll('button[data-link]').forEach(b => b.addEventListener('click', async () => {
+    const p = pls[b.dataset.link];
+    const url = prompt('วางลิงก์ Spotify Playlist (เว้นว่างเพื่อลบลิงก์)', p.spotifyUrl || '');
+    if (url === null) return;
+    const r2 = await api('/api/spotify/attach', { uid: p.uid, pid: p.pid, url });
+    if (!r2.ok) return showToast(r2.data.error || 'บันทึกไม่ได้');
+    showToast('บันทึกแล้ว'); loadList();
+  }));
+}
+
+async function generate(p) {
+  showToast('กำลังค้นหาเพลงบน Spotify…');
+  const r = await api('/api/spotify/match', { uid: p.uid, pid: p.pid });
+  if (!r.ok) return showToast(r.data.error || 'ค้นหาไม่ได้');
+  cur = p; matched = r.data;
+  $('p-title').textContent = '🎧 ' + p.name;
+  const found = matched.items.filter(i => i.candidates.length).length;
+  $('p-sub').textContent = `ของ ${p.ownerName} · จับคู่ได้ ${found} จาก ${matched.items.length} เพลง — ตรวจ/เลือกเวอร์ชันก่อนสร้าง`;
+  $('p-name').value = p.name;
+  $('p-items').innerHTML = matched.items.map((it, i) => `
+    <div class="sp-item">
+      <div><b>${escapeHtml(it.title)}</b> <span class="small-note">${escapeHtml(it.artist || '')}</span></div>
+      ${it.candidates.length
+        ? `<select data-i="${i}">${it.candidates.map(c => `<option value="${escapeHtml(c.uri)}">${escapeHtml(c.name)} — ${escapeHtml(c.artists)}${c.album ? ' · ' + escapeHtml(c.album) : ''}</option>`).join('')}<option value="">❌ ไม่ใส่เพลงนี้</option></select>`
+        : '<div class="sp-miss small-note">ไม่พบบน Spotify — ข้ามเพลงนี้</div>'}
+    </div>`).join('');
+  $('prev-card').style.display = ''; $('prev-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('p-cancel').addEventListener('click', () => { $('prev-card').style.display = 'none'; });
+$('p-create').addEventListener('click', async () => {
+  const uris = [...$('p-items').querySelectorAll('select')].map(s => s.value).filter(Boolean);
+  if (!uris.length) return showToast('ไม่มีเพลงที่จะใส่');
+  const btn = $('p-create'); btn.disabled = true; btn.textContent = 'กำลังสร้าง…';
+  const r = await api('/api/spotify/create', { uid: cur.uid, pid: cur.pid, name: $('p-name').value, uris });
+  btn.disabled = false; btn.textContent = '🎧 สร้างบน Spotify';
+  if (!r.ok) return showToast(r.data.error || 'สร้างไม่ได้');
+  showToast(`สร้างแล้ว (${r.data.added} เพลง) และแนบลิงก์ให้ Public Playlist แล้ว`);
+  $('prev-card').style.display = 'none'; loadList();
+});
+
+(async () => {
+  const r = await api('/api/spotify/status');
+  if (!r.ok) { $('denied').style.display = ''; return; }
+  status = r.data; $('main').style.display = ''; renderConn(); loadList();
+})();
+</script>
+</body>
+</html>

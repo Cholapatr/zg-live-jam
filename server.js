@@ -524,6 +524,212 @@ app.get('/api/me', (req, res) => {
   });
 });
 
+// ---------- Spotify playlist generator ----------
+// One shared Spotify account (a Premium one, connected once by the Super Admin)
+// creates playlists for people's public ZG Live Jam playlists. The resulting
+// link is stored on that playlist and shown to everyone on the Public Playlist
+// page. Nobody else needs to log in to Spotify. Registered before /auth/:provider.
+const SPOTIFY_ID = () => process.env.SPOTIFY_CLIENT_ID;
+const SPOTIFY_SECRET = () => process.env.SPOTIFY_CLIENT_SECRET;
+// Spotify only accepts https or http://127.0.0.1 while Microsoft login wants http://localhost,
+// so locally the callback can live on a different host (SPOTIFY_REDIRECT_URI) than APP_BASE_URL.
+const SPOTIFY_REDIRECT = () => process.env.SPOTIFY_REDIRECT_URI || `${APP_BASE_URL}/auth/spotify/callback`;
+const SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private';
+const spotifyConfigured = () => !!(SPOTIFY_ID() && SPOTIFY_SECRET());
+let spotifyAccess = { token: '', exp: 0 };
+
+async function spotifyTokenRequest(params) {
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: 'Basic ' + Buffer.from(SPOTIFY_ID() + ':' + SPOTIFY_SECRET()).toString('base64'),
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error_description || d.error || 'Spotify token error');
+  return d;
+}
+async function spotifyAccessToken() {
+  if (spotifyAccess.token && Date.now() < spotifyAccess.exp - 30000) return spotifyAccess.token;
+  if (!db.spotify || !db.spotify.refreshToken) throw new Error('ยังไม่ได้เชื่อมต่อ Spotify (Super Admin ต้องกด Connect Spotify ก่อน)');
+  const d = await spotifyTokenRequest({ grant_type: 'refresh_token', refresh_token: db.spotify.refreshToken });
+  if (d.refresh_token) { db.spotify.refreshToken = d.refresh_token; saveDb(); }
+  spotifyAccess = { token: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000 };
+  return spotifyAccess.token;
+}
+async function spotifyApi(method, path, body) {
+  const token = await spotifyAccessToken();
+  const r = await fetch('https://api.spotify.com/v1' + path, {
+    method,
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error((d.error && d.error.message) || ('Spotify error ' + r.status));
+    e.status = r.status; throw e;
+  }
+  return d;
+}
+
+app.get('/auth/spotify/connect', (req, res) => {
+  if (!reqRoles(req).superadmin) return res.status(403).send('ต้องเป็น Super Admin');
+  if (!spotifyConfigured()) return res.status(404).send('ยังไม่ได้ตั้งค่า SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET ใน .env');
+  // The state is a signed, short-lived token (issued only to a Super Admin), so the callback
+  // needs no cookie — it may arrive on another host (127.0.0.1) than the login (localhost).
+  const state = signToken({ spotify: true, exp: Date.now() + 10 * 60 * 1000 });
+  res.redirect('https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    client_id: SPOTIFY_ID(), response_type: 'code', redirect_uri: SPOTIFY_REDIRECT(), scope: SPOTIFY_SCOPE, state,
+  }).toString());
+});
+
+app.get('/auth/spotify/callback', async (req, res) => {
+  try {
+    const sd = verifyToken(String(req.query.state || ''));
+    if (!sd || !sd.spotify || !req.query.code) throw new Error('state ไม่ถูกต้อง / ถูกปฏิเสธ ลองใหม่อีกครั้ง');
+    const d = await spotifyTokenRequest({ grant_type: 'authorization_code', code: String(req.query.code), redirect_uri: SPOTIFY_REDIRECT() });
+    db.spotify = { refreshToken: d.refresh_token, connectedAt: Date.now() };
+    spotifyAccess = { token: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000 };
+    try {
+      const me = await spotifyApi('GET', '/me');
+      db.spotify.userName = me.display_name || me.id; db.spotify.userUrl = (me.external_urls && me.external_urls.spotify) || '';
+    } catch (e) { /* name is optional */ }
+    saveDb();
+    res.redirect(`${APP_BASE_URL}/spotify.html?connected=1`);
+  } catch (e) {
+    res.status(400).send('เชื่อมต่อ Spotify ไม่สำเร็จ: ' + String(e.message || e));
+  }
+});
+
+app.get('/api/spotify/status', requireDjAdminRole, (req, res) => {
+  res.json({
+    configured: spotifyConfigured(), connected: !!(db.spotify && db.spotify.refreshToken),
+    accountName: (db.spotify && db.spotify.userName) || '', superadmin: !!reqRoles(req).superadmin,
+    redirectUri: SPOTIFY_REDIRECT(),
+  });
+});
+
+// Every public playlist of every user (for the admin to pick from).
+app.get('/api/spotify/playlists', requireDjAdminRole, (req, res) => {
+  const out = [];
+  db.users.forEach((u) => {
+    userPlaylists(u).filter((p) => p.visibility === 'public' && p.songIds.length).forEach((p) => {
+      out.push({ uid: u.id, pid: p.id, ownerName: ownerDisplayName(u), name: p.name, songCount: p.songIds.length, spotifyUrl: p.spotifyUrl || '' });
+    });
+  });
+  out.sort((a, b) => a.ownerName.localeCompare(b.ownerName, 'th') || a.name.localeCompare(b.name, 'th'));
+  res.json({ playlists: out });
+});
+
+function spotifyCandidate(t) {
+  return {
+    uri: t.uri, name: t.name, artists: (t.artists || []).map((a) => a.name).join(', '),
+    album: (t.album && t.album.name) || '', image: (t.album && t.album.images && t.album.images.length ? t.album.images[t.album.images.length - 1].url : ''),
+    url: (t.external_urls && t.external_urls.spotify) || '',
+  };
+}
+async function spotifySearchSong(title, artist) {
+  const clean = (s) => String(s || '').replace(/["“”]/g, ' ').trim();
+  const tries = [];
+  if (artist) tries.push(`track:${clean(title)} artist:${clean(artist)}`);
+  tries.push(`${clean(title)} ${clean(artist)}`.trim());
+  for (const q of tries) {
+    const d = await spotifyApi('GET', '/search?' + new URLSearchParams({ q, type: 'track', limit: '5' }).toString());
+    const items = (d.tracks && d.tracks.items) || [];
+    if (items.length) return items.map(spotifyCandidate);
+  }
+  return [];
+}
+
+// Step 1: search Spotify for each song, return candidates (admin reviews them).
+app.post('/api/spotify/match', requireDjAdminRole, async (req, res) => {
+  try {
+    const found = findPublicPlaylist(String((req.body || {}).uid || ''), String((req.body || {}).pid || ''));
+    if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist (อาจเปลี่ยนเป็น Private แล้ว)' });
+    const songs = publicSongsOf(found.owner, found.pl);
+    const items = [];
+    for (const s of songs) {
+      let candidates = [];
+      try { candidates = await spotifySearchSong(s.title, s.artist); } catch (e) { if (e.status === 429 || /เชื่อมต่อ/.test(e.message)) throw e; }
+      items.push({ title: s.title, artist: s.artist, candidates });
+    }
+    res.json({ name: found.pl.name, ownerName: ownerDisplayName(found.owner), items });
+  } catch (e) {
+    res.status(e.status === 429 ? 429 : 400).json({ error: e.status === 429 ? 'Spotify จำกัดการเรียกชั่วคราว ลองใหม่ในอีกสักครู่' : String(e.message || e) });
+  }
+});
+
+// Step 2: create the playlist on the shared account and attach the link.
+app.post('/api/spotify/create', requireDjAdminRole, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const found = findPublicPlaylist(String(b.uid || ''), String(b.pid || ''));
+    if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+    const uris = (Array.isArray(b.uris) ? b.uris : []).filter((u) => /^spotify:track:[A-Za-z0-9]+$/.test(u));
+    if (!uris.length) return res.status(400).json({ error: 'ไม่มีเพลงที่เลือก' });
+    const name = String(b.name || found.pl.name).trim().slice(0, 100) || found.pl.name;
+    const pl = await spotifyApi('POST', '/me/playlists', {
+      name, public: true, description: `ZG Live Jam — Playlist ของ ${ownerDisplayName(found.owner)}`,
+    });
+    for (let i = 0; i < uris.length; i += 100) {
+      await spotifyApi('POST', `/playlists/${pl.id}/items`, { uris: uris.slice(i, i + 100) });
+    }
+    const url = (pl.external_urls && pl.external_urls.spotify) || `https://open.spotify.com/playlist/${pl.id}`;
+    const raw = findPlaylist(found.owner, found.pl.id);
+    if (raw) { raw.spotifyUrl = url; saveDb(); }
+    res.json({ ok: true, url, added: uris.length });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
+// Parse / validate a Spotify playlist link (returns '' for empty, null for invalid).
+function cleanSpotifyUrl(v) {
+  const url = String(v || '').trim();
+  if (!url) return '';
+  const m = url.match(/^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?playlist\/([A-Za-z0-9]{22})/);
+  return m ? `https://open.spotify.com/playlist/${m[1]}` : null;
+}
+
+// Spotify Code (the scannable sound-wave image) of a playlist, fetched from Spotify's
+// code service and served from our own site so people can view / save it.
+const spotifyCodeCache = new Map();
+app.get('/api/spotify-code/:id', requireLogin, async (req, res) => {
+  const id = String(req.params.id || '').replace(/\.png$/i, '');
+  if (!/^[A-Za-z0-9]{22}$/.test(id)) return res.status(400).send('bad id');
+  try {
+    let buf = spotifyCodeCache.get(id);
+    if (!buf) {
+      const r = await fetch(`https://scannables.scdn.co/uri/plain/png/021d44/white/640/spotify:playlist:${id}`);
+      if (!r.ok) throw new Error('code service ' + r.status);
+      buf = Buffer.from(await r.arrayBuffer());
+      if (spotifyCodeCache.size > 200) spotifyCodeCache.clear();
+      spotifyCodeCache.set(id, buf);
+    }
+    res.set('Content-Type', 'image/png').set('Cache-Control', 'private, max-age=86400');
+    if (req.query.dl) res.set('Content-Disposition', `attachment; filename="spotify-code-${id}.png"`);
+    res.send(buf);
+  } catch (e) {
+    console.error('spotify-code failed:', e && e.message);
+    res.status(502).send('สร้าง Spotify Code ไม่ได้');
+  }
+});
+
+// Attach / replace / clear a Spotify link by hand.
+app.post('/api/spotify/attach', requireDjAdminRole, (req, res) => {
+  const b = req.body || {};
+  const owner = db.users.find((u) => u.id === String(b.uid || ''));
+  const raw = owner && findPlaylist(owner, String(b.pid || ''));
+  if (!raw) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+  const url = String(b.url || '').trim();
+  const clean = cleanSpotifyUrl(url);
+  if (clean === null) return res.status(400).json({ error: 'ลิงก์ต้องเป็นลิงก์ Playlist จาก Spotify (https://open.spotify.com/playlist/…)' });
+  raw.spotifyUrl = clean; saveDb();
+  res.json({ ok: true });
+});
+
 // Registered before the /auth/:provider wildcard below, otherwise Express
 // would match "logout" as a provider name and this route would never run.
 app.get('/auth/logout', (req, res) => {
@@ -667,7 +873,9 @@ app.post('/api/playlists', requireLogin, (req, res) => {
   if (!req.user.playlists) req.user.playlists = [];
   if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
   const visibility = req.body && req.body.visibility === 'public' ? 'public' : 'private';
-  const p = { id: newId(), name, visibility, songIds: [], createdAt: Date.now() };
+  const sUrl = cleanSpotifyUrl(req.body && req.body.spotifyUrl);
+  if (sUrl === null) return res.status(400).json({ error: 'ลิงก์ Spotify ไม่ถูกต้อง (ต้องเป็น https://open.spotify.com/playlist/…)' });
+  const p = { id: newId(), name, visibility, songIds: [], spotifyUrl: sUrl, createdAt: Date.now() };
   req.user.playlists.push(p);
   saveDb();
   res.json({ ok: true, playlist: p, playlists: userPlaylists(req.user) });
@@ -683,6 +891,11 @@ app.post('/api/playlists/:pid/edit', requireLogin, (req, res) => {
     p.name = n;
   }
   if (visibility === 'public' || visibility === 'private') p.visibility = visibility;
+  if (req.body && req.body.spotifyUrl !== undefined) {
+    const sUrl = cleanSpotifyUrl(req.body.spotifyUrl);
+    if (sUrl === null) return res.status(400).json({ error: 'ลิงก์ Spotify ไม่ถูกต้อง (ต้องเป็น https://open.spotify.com/playlist/…)' });
+    p.spotifyUrl = sUrl;
+  }
   saveDb();
   res.json({ ok: true, playlists: userPlaylists(req.user) });
 });
@@ -725,7 +938,7 @@ app.get('/api/public-playlists', requireLogin, (req, res) => {
     owners.push({
       userId: u.id,
       ownerName: ownerDisplayName(u),
-      playlists: pls.map((p) => ({ id: p.id, name: p.name, songCount: p.songIds.length, songs: publicSongsOf(u, p).map((x) => ({ title: x.title, artist: x.artist })) })),
+      playlists: pls.map((p) => ({ id: p.id, name: p.name, spotifyUrl: p.spotifyUrl || '', songCount: p.songIds.length, songs: publicSongsOf(u, p).map((x) => ({ title: x.title, artist: x.artist })) })),
     });
   });
   owners.sort((a, b) => a.ownerName.localeCompare(b.ownerName, 'th'));
@@ -744,7 +957,7 @@ app.get('/api/public-playlists/:uid/:pid', requireLogin, (req, res) => {
   if (!found) return res.status(404).json({ error: 'ไม่พบ Playlist นี้ (อาจถูกเปลี่ยนเป็น Private แล้ว)' });
   const mine = new Set((req.user.favorites || []).map((f) => (f.title + '|' + (f.artist || '')).toLowerCase()));
   const songs = publicSongsOf(found.owner, found.pl).map((s) => ({ ...s, inMyFavourite: mine.has((s.title + '|' + s.artist).toLowerCase()) }));
-  res.json({ ownerName: ownerDisplayName(found.owner), name: found.pl.name, songs });
+  res.json({ ownerName: ownerDisplayName(found.owner), name: found.pl.name, spotifyUrl: found.pl.spotifyUrl || '', songs });
 });
 
 // Copy songs from a friend's public playlist into MY Favourite.
@@ -1381,7 +1594,7 @@ function userPlaylists(user) {
   return (user.playlists || []).map((p) => ({
     id: p.id, name: p.name, visibility: p.visibility === 'public' ? 'public' : 'private',
     songIds: (p.songIds || []).filter((id) => favIds.has(id)), // drop songs removed from Favourite
-    createdAt: p.createdAt,
+    createdAt: p.createdAt, spotifyUrl: p.spotifyUrl || '',
   }));
 }
 function findPlaylist(user, id) { return (user.playlists || []).find((p) => p.id === id); }
