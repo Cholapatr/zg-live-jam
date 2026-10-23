@@ -845,6 +845,20 @@ app.post('/api/favorites', requireLogin, (req, res) => {
 
 // Fix a typo in your own favourite (title/artist/chord) — favourites have
 // no admin-lock like Request List entries do, since they're private to you.
+// Copy a song of an event (used on History events) into MY Favourite. Same title+artist = reuse it.
+app.post('/api/songs/:id/to-favourite', requireLogin, (req, res) => {
+  const sg = findSong(req.params.id);
+  if (!sg) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  req.user.favorites = req.user.favorites || [];
+  const key = (t, a) => (String(t || '') + '|' + String(a || '')).trim().toLowerCase();
+  const existing = req.user.favorites.find((f) => key(f.title, f.artist) === key(sg.title, sg.artist));
+  if (existing) return res.json({ ok: true, existed: true, favId: existing.id, favoriteCount: req.user.favorites.length });
+  const fav = { id: newId(), title: sg.title, artist: sg.artist || '', chordUrl: sg.chordUrl || '', chordId: sg.chordId || '', addedAt: Date.now() };
+  req.user.favorites.push(fav);
+  saveDb();
+  res.json({ ok: true, existed: false, favId: fav.id, favoriteCount: req.user.favorites.length });
+});
+
 app.post('/api/favorites/:favId/edit', requireLogin, (req, res) => {
   const fav = (req.user.favorites || []).find((f) => f.id === req.params.favId);
   if (!fav) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });

@@ -157,6 +157,7 @@ function renderSongs() {
       <div id="names-${s.id}" style="display:none;" class="small-note">${voterListHtml(s.voters)}</div>` : ''}
       ${Object.keys(s.musicianResponses).length ? `<a href="#" data-musicians="${s.id}" class="link-out">🎸 นักดนตรีว่าไง</a>
       <div id="musicians-${s.id}" style="display:none;" class="small-note">${musicianListHtml(s.musicianResponses)}</div>` : ''}
+      ${historySongActionsHtml(s.id)}
       <div class="btn-row" style="margin-top:8px;">
         <button data-song="${s.id}" data-vote="want" class="${mine === 'want' ? 'selected' : ''}">🙋 อยากฟัง</button>
         <button data-song="${s.id}" data-vote="singMyself" class="${mine === 'singMyself' ? 'selected' : ''}">🎤 อยากร้อง</button>

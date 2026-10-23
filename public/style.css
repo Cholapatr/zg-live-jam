@@ -1059,10 +1059,11 @@ button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-
   .split-layout { max-width: 94vw; }
   header.top { padding-left: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); padding-right: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); }
 }
-@media (min-width: 1000px) {
-  #event-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 0 16px; align-items: start; }
-  #event-list > .section-title { grid-column: 1 / -1; }
-  #event-list > .empty { grid-column: 1 / -1; }
+@media (min-width: 700px) {
+  /* Event cards: centred, up to ~640px each, several per row on wide screens. */
+  #event-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 16px; align-items: flex-start; }
+  #event-list > .card { flex: 1 1 420px; max-width: 640px; }
+  #event-list > .section-title, #event-list > .empty { flex: 0 0 100%; max-width: 640px; }
 }
 
 /* Wide screens: all action buttons of a queue item flow on one line (wrapping only if needed). */

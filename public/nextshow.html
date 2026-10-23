@@ -336,6 +336,7 @@ function render() {
         <button data-out="${s.id}" class="warn">🗑 ลบออกจากคิว</button>
       </div>` : ''}
       </div>
+      ${historySongActionsHtml(s.id)}
       <div class="badge-row" style="margin-top:8px;">
         <span class="badge strong">🙋 อยากฟัง ${s.votes.want}</span>
         <span class="badge strong">🎤 อยากร้อง ${s.votes.singMyself}</span>
@@ -428,6 +429,7 @@ function renderPlayedShow() {
           <div class="small-note" style="margin:2px 0 0;">👤 ขอโดย ${escapeHtml(s.requestedBy || 'ไม่ระบุชื่อ')}</div>
         </div>
       </div>
+      ${historySongActionsHtml(s.id)}
       ${isOpenMode() ? `<div class="btn-row" style="margin-top:8px;"><button data-undo="${s.id}">↩ ยังไม่เล่น</button></div>` : ''}
     </div>`;
   }).join('');

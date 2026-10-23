@@ -930,9 +930,8 @@ async function renderAuthBar() {
     const data = await res.json();
     if (data.loggedIn) {
       const favCount = (data.favorites || []).length;
-      const icon = AUTH_PROVIDER_ICON[data.user.provider] || '👤';
-      el.innerHTML = `<span>${icon} ${escapeHtml(data.user.name || 'ผู้ใช้')}</span> · ` +
-        `<a href="favorites.html">⭐ Favourite (${favCount})</a> · ` +
+      // The signed-in name is deliberately not shown here (it is in the logo menu); just Favourite + Sign out.
+      el.innerHTML = `<a href="favorites.html">⭐ Favourite (${favCount})</a> · ` +
         `<a href="/auth/logout?from=${encodeURIComponent(location.pathname)}">Sign out</a>`;
     } else {
       el.innerHTML = `<a href="favorites.html">⭐ Favourite</a> · ` +
@@ -979,3 +978,76 @@ function spotifyBlockHtml(url, noLink) {
     '<div class="spotify-code"><img src="/api/spotify-code/' + id + '" alt="Spotify Code" onerror="' + fail + '" />' +
     '<a class="link-out" href="/api/spotify-code/' + id + '?dl=1" download="spotify-code.png">⬇ บันทึกรูป Spotify Code</a></div></div>';
 }
+
+
+// ---- History events: add a song to my Favourite / to a playlist (playlists are the same ones as in Favourite) ----
+function historySongActionsHtml(songId) {
+  if (getEventStatus() !== 'history') return '';
+  return '<div class="btn-row hist-actions" style="margin-top:8px;">' +
+    '<button type="button" data-hfav="' + songId + '">⭐ Add to Favourite</button>' +
+    '<button type="button" data-hpl="' + songId + '">📁 Add to Playlist</button></div>';
+}
+async function histNeedLogin() {
+  const me = await getMyAuth();
+  if (me && me.loggedIn) return true;
+  showToast('ต้องเข้าสู่ระบบก่อน');
+  setTimeout(() => { location.href = 'login.html?from=' + encodeURIComponent(location.pathname); }, 900);
+  return false;
+}
+async function histPost(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast(data.error || 'ทำรายการไม่สำเร็จ'); return null; }
+  return data;
+}
+async function histAddFavourite(songId) {
+  if (!(await histNeedLogin())) return null;
+  const d = await histPost('/api/songs/' + encodeURIComponent(songId) + '/to-favourite');
+  if (d) showToast(d.existed ? '⭐ มีใน Favourite ของคุณอยู่แล้ว' : '⭐ เพิ่มใน Favourite แล้ว');
+  return d;
+}
+async function histOpenPlaylistModal(songId) {
+  if (!(await histNeedLogin())) return;
+  const d = await histPost('/api/songs/' + encodeURIComponent(songId) + '/to-favourite'); // playlists hold favourites
+  if (!d) return;
+  const me = await fetch('/api/me').then(r => r.json()).catch(() => ({}));
+  const pls = me.playlists || [];
+  const checked = new Set(pls.filter(p => (p.songIds || []).includes(d.favId)).map(p => p.id));
+  let bg = document.getElementById('hist-pl-bg');
+  if (bg) bg.remove();
+  bg = document.createElement('div');
+  bg.id = 'hist-pl-bg'; bg.className = 'modal-bg modal-center'; bg.style.display = 'flex';
+  bg.innerHTML = '<div class="modal"><button class="close-x" id="hpl-x">✕</button>' +
+    '<h2 style="margin-top:0;">📁 Add to Playlist</h2>' +
+    '<div class="small-note" style="margin-bottom:8px;">เพลงนี้ถูกเพิ่มใน ⭐ Favourite ของคุณแล้ว เลือก Playlist ที่จะใส่ได้เลย (Playlist เดียวกับในหน้า Favourite)</div>' +
+    '<div class="pl-pick-list">' + (pls.length ? pls.map(p => '<label class="pl-pick-row"><input type="checkbox" data-plid="' + p.id + '"' + (checked.has(p.id) ? ' checked' : '') + ' /><span><b>' + escapeHtml(p.name) + '</b> <span class="small-note">' + (p.visibility === 'public' ? '🌐 Public' : '🔒 Private') + '</span></span></label>').join('') : '<div class="empty">ยังไม่มี Playlist — สร้างใหม่ด้านล่างได้เลย</div>') + '</div>' +
+    '<label style="display:block;margin-top:10px;">＋ สร้าง Playlist ใหม่ (ถ้าต้องการ)</label>' +
+    '<input type="text" id="hpl-new" maxlength="60" placeholder="ชื่อ Playlist ใหม่" />' +
+    '<div class="btn-row" id="hpl-vis" style="margin-top:6px;"><button type="button" data-vis="private" class="selected">🔒 Private</button><button type="button" data-vis="public">🌐 Public</button></div>' +
+    '<div class="btn-row" style="margin-top:14px;"><button id="hpl-cancel" style="flex:1;">ยกเลิก</button><button class="btn-blue" id="hpl-save" style="flex:1;">บันทึก</button></div></div>';
+  document.body.appendChild(bg);
+  let vis = 'private';
+  const close = () => bg.remove();
+  bg.querySelector('#hpl-x').onclick = close; bg.querySelector('#hpl-cancel').onclick = close;
+  bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  bg.querySelectorAll('#hpl-vis button').forEach(b => b.addEventListener('click', () => { vis = b.dataset.vis; bg.querySelectorAll('#hpl-vis button').forEach(x => x.classList.toggle('selected', x === b)); }));
+  bg.querySelectorAll('input[data-plid]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) checked.add(cb.dataset.plid); else checked.delete(cb.dataset.plid); }));
+  bg.querySelector('#hpl-save').onclick = async () => {
+    const name = bg.querySelector('#hpl-new').value.trim();
+    const ids = new Set(checked);
+    if (name) {
+      const np = await histPost('/api/playlists', { name, visibility: vis });
+      if (!np) return;
+      ids.add(np.playlist.id);
+    }
+    const r = await histPost('/api/favorites/' + encodeURIComponent(d.favId) + '/playlists', { playlistIds: [...ids] });
+    if (!r) return;
+    close(); showToast('📁 บันทึกลง Playlist แล้ว');
+  };
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('button[data-hfav]');
+  if (a) { histAddFavourite(a.dataset.hfav); return; }
+  const p = e.target.closest && e.target.closest('button[data-hpl]');
+  if (p) histOpenPlaylistModal(p.dataset.hpl);
+});
