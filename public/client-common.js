@@ -983,9 +983,9 @@ function spotifyBlockHtml(url, noLink) {
 // ---- History events: add a song to my Favourite / to a playlist (playlists are the same ones as in Favourite) ----
 function historySongActionsHtml(songId) {
   if (getEventStatus() !== 'history') return '';
-  return '<div class="btn-row hist-actions" style="margin-top:8px;">' +
-    '<button type="button" data-hfav="' + songId + '">⭐ Add to Favourite</button>' +
-    '<button type="button" data-hpl="' + songId + '">📁 Add to Playlist</button></div>';
+  return '<span class="hist-actions">' +
+    '<button type="button" class="hist-fav" data-hfav="' + songId + '">⭐ <span class="hl">Add to </span>Favourite</button>' +
+    '<button type="button" class="hist-pl" data-hpl="' + songId + '">📁 <span class="hl">Add to </span>Playlist</button></span>';
 }
 async function histNeedLogin() {
   const me = await getMyAuth();
@@ -1008,18 +1008,18 @@ async function histAddFavourite(songId) {
 }
 async function histOpenPlaylistModal(songId) {
   if (!(await histNeedLogin())) return;
-  const d = await histPost('/api/songs/' + encodeURIComponent(songId) + '/to-favourite'); // playlists hold favourites
-  if (!d) return;
-  const me = await fetch('/api/me').then(r => r.json()).catch(() => ({}));
-  const pls = me.playlists || [];
-  const checked = new Set(pls.filter(p => (p.songIds || []).includes(d.favId)).map(p => p.id));
+  const res0 = await fetch('/api/songs/' + encodeURIComponent(songId) + '/playlists');
+  const d0 = await res0.json().catch(() => ({}));
+  if (!res0.ok) { showToast(d0.error || 'โหลด Playlist ไม่ได้'); return; }
+  const pls = d0.playlists || [];
+  const checked = new Set(pls.filter(p => p.has).map(p => p.id));
   let bg = document.getElementById('hist-pl-bg');
   if (bg) bg.remove();
   bg = document.createElement('div');
   bg.id = 'hist-pl-bg'; bg.className = 'modal-bg modal-center'; bg.style.display = 'flex';
   bg.innerHTML = '<div class="modal"><button class="close-x" id="hpl-x">✕</button>' +
     '<h2 style="margin-top:0;">📁 Add to Playlist</h2>' +
-    '<div class="small-note" style="margin-bottom:8px;">เพลงนี้ถูกเพิ่มใน ⭐ Favourite ของคุณแล้ว เลือก Playlist ที่จะใส่ได้เลย (Playlist เดียวกับในหน้า Favourite)</div>' +
+    '<div class="small-note" style="margin-bottom:8px;">เลือก Playlist ที่จะใส่เพลงนี้ (เป็น Playlist เดียวกับในหน้า Favourite) โดยไม่ต้องเพิ่มเข้า ⭐ Favourite ก่อน</div>' +
     '<div class="pl-pick-list">' + (pls.length ? pls.map(p => '<label class="pl-pick-row"><input type="checkbox" data-plid="' + p.id + '"' + (checked.has(p.id) ? ' checked' : '') + ' /><span><b>' + escapeHtml(p.name) + '</b> <span class="small-note">' + (p.visibility === 'public' ? '🌐 Public' : '🔒 Private') + '</span></span></label>').join('') : '<div class="empty">ยังไม่มี Playlist — สร้างใหม่ด้านล่างได้เลย</div>') + '</div>' +
     '<label style="display:block;margin-top:10px;">＋ สร้าง Playlist ใหม่ (ถ้าต้องการ)</label>' +
     '<input type="text" id="hpl-new" maxlength="60" placeholder="ชื่อ Playlist ใหม่" />' +
@@ -1033,14 +1033,7 @@ async function histOpenPlaylistModal(songId) {
   bg.querySelectorAll('#hpl-vis button').forEach(b => b.addEventListener('click', () => { vis = b.dataset.vis; bg.querySelectorAll('#hpl-vis button').forEach(x => x.classList.toggle('selected', x === b)); }));
   bg.querySelectorAll('input[data-plid]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) checked.add(cb.dataset.plid); else checked.delete(cb.dataset.plid); }));
   bg.querySelector('#hpl-save').onclick = async () => {
-    const name = bg.querySelector('#hpl-new').value.trim();
-    const ids = new Set(checked);
-    if (name) {
-      const np = await histPost('/api/playlists', { name, visibility: vis });
-      if (!np) return;
-      ids.add(np.playlist.id);
-    }
-    const r = await histPost('/api/favorites/' + encodeURIComponent(d.favId) + '/playlists', { playlistIds: [...ids] });
+    const r = await histPost('/api/songs/' + encodeURIComponent(songId) + '/playlists', { playlistIds: [...checked], newName: bg.querySelector('#hpl-new').value.trim(), visibility: vis });
     if (!r) return;
     close(); showToast('📁 บันทึกลง Playlist แล้ว');
   };

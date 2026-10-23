@@ -1051,13 +1051,13 @@ button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-
 .spotify-code{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
 .spotify-code img{width:240px;max-width:100%;border-radius:10px;display:block}
 
-/* Responsive width: phones stay compact; tablets / PCs use ~70% of the screen (split chord view = 94%,
+/* Responsive width: phones stay compact; tablets / PCs use ~60% of the screen (split chord view = 94%,
    wide data tables such as Master Data = 85%). */
 @media (min-width: 700px) {
-  .wrap { max-width: max(70vw, 640px); padding: 16px 24px; }
+  .wrap { max-width: max(60vw, 640px); padding: 16px 24px; }
   .wrap.wrap-wide { max-width: 85vw; }
   .split-layout { max-width: 94vw; }
-  header.top { padding-left: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); padding-right: calc((100vw - min(100vw, max(70vw, 640px))) / 2 + 24px); }
+  header.top { padding-left: calc((100vw - min(100vw, max(60vw, 640px))) / 2 + 24px); padding-right: calc((100vw - min(100vw, max(60vw, 640px))) / 2 + 24px); }
 }
 @media (min-width: 700px) {
   /* Event cards: centred, up to ~640px each, several per row on wide screens. */
@@ -1071,4 +1071,16 @@ button.btn-grey { background: #6b7685; color: #fff; border-color: #8a94a3; font-
   .q-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
   .q-actions > .btn-row { display: contents; }
   .q-actions > .btn-row > button { margin: 0; }
+}
+
+/* History: Add to Favourite / Add to Playlist — solid colours, on the title line */
+.hist-actions { display: inline-flex; gap: 8px; flex-shrink: 0; align-self: flex-start; flex-wrap: nowrap; }
+.hist-actions button { white-space: nowrap; font-weight: 700; border: none; opacity: 1; }
+.hist-actions .hist-fav { background: #f5b301; color: #2b2000; }
+.hist-actions .hist-pl { background: #2f7df6; color: #fff; }
+body.is-history .card.played { opacity: 1; }
+body.is-history .card.played .grow { opacity: .6; }
+@media (max-width: 600px) {
+  .hist-actions .hl { display: none; }
+  .hist-actions button { padding: 6px 10px; }
 }

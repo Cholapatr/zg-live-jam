@@ -275,6 +275,12 @@
 <script src="/client-common.js"></script>
 <script>
 let favorites = [];
+// A song of mine by id: from Favourite or from any playlist.
+function songById(id) {
+  return favorites.find(x => x.id === id) || playlists.reduce((hit, p) => hit || (p.songs || []).find(x => x.id === id), null) || null;
+}
+const favKey = (t, a) => (String(t || '') + '|' + String(a || '')).trim().toLowerCase();
+const plHasSong = (p, s) => (p.songs || []).some(x => favKey(x.title, x.artist) === favKey(s.title, s.artist));
 let pendingChordUrl = '';
 let pendingChordId = '';
 let reqSelectedVoteType = null;
@@ -336,7 +342,7 @@ function exitSplitMode() {
 }
 
 function openPracticePanel(favId) {
-  const f = favorites.find(x => x.id === favId);
+  const f = songById(favId);
   if (!f) return;
   const wasAlreadyOpen = !!currentPracticeFavId;
   const { url, direct } = chordUrlForFav(f);
@@ -396,7 +402,7 @@ function baseFavs() {
   if (currentView === 'all') return favorites;
   const p = plById(currentView);
   if (!p) { currentView = 'all'; return favorites; }
-  return p.songIds.map(id => favorites.find(f => f.id === id)).filter(Boolean);
+  return p.songs || [];
 }
 const VIS_LABEL = { private: '🔒 Private', public: '🌐 Public' };
 
@@ -405,7 +411,7 @@ function renderPlaylistBar() {
   const bar = document.getElementById('pl-bar');
   bar.innerHTML =
     `<button class="pl-chip ${currentView === 'all' ? 'selected' : ''}" data-view="all">⭐ ทั้งหมด (${favorites.length})</button>` +
-    playlists.map(p => `<button class="pl-chip ${currentView === p.id ? 'selected' : ''}" data-view="${p.id}">${p.visibility === 'public' ? '🌐' : '🔒'} ${escapeHtml(p.name)} (${p.songIds.filter(id => favorites.some(f => f.id === id)).length})</button>`).join('') +
+    playlists.map(p => `<button class="pl-chip ${currentView === p.id ? 'selected' : ''}" data-view="${p.id}">${p.visibility === 'public' ? '🌐' : '🔒'} ${escapeHtml(p.name)} (${(p.songs || []).length})</button>`).join('') +
     `<button class="pl-chip pl-chip-new" id="pl-new">＋ Playlist ใหม่</button>`;
   bar.querySelectorAll('button[data-view]').forEach(b => b.addEventListener('click', () => { currentView = b.dataset.view; renderFavs(); }));
   document.getElementById('pl-new').addEventListener('click', () => openPlModal(null));
@@ -482,7 +488,7 @@ function openPlSongsModal(pid) {
   const p = plById(pid);
   if (!p) return;
   plSongsId = pid;
-  plSongsChecked = new Set(p.songIds);
+  plSongsChecked = new Set(favorites.filter(fv => plHasSong(p, fv)).map(fv => fv.id));
   document.getElementById('plsongs-name').textContent = '"' + p.name + '"';
   document.getElementById('plsongs-search').value = '';
   renderPlSongsList();
@@ -505,11 +511,7 @@ const closePlSongs = () => { document.getElementById('plsongs-modal-bg').style.d
 document.getElementById('plsongs-modal-close').addEventListener('click', closePlSongs);
 document.getElementById('plsongs-cancel').addEventListener('click', closePlSongs);
 document.getElementById('plsongs-save').addEventListener('click', async () => {
-  // keep existing order for songs that stay, append newly ticked ones
-  const p = plById(plSongsId);
-  const kept = (p ? p.songIds : []).filter(id => plSongsChecked.has(id));
-  const added = favorites.map(f => f.id).filter(id => plSongsChecked.has(id) && !kept.includes(id));
-  const data = await plApi(`/api/playlists/${plSongsId}/songs`, { favIds: kept.concat(added) });
+  const data = await plApi(`/api/playlists/${plSongsId}/songs`, { favIds: [...plSongsChecked] });
   if (!data) return;
   playlists = data.playlists;
   closePlSongs();
@@ -524,7 +526,7 @@ function openFavPlModal(favId) {
   const fav = favorites.find(f => f.id === favId);
   if (!fav) return;
   favPlFavId = favId;
-  favPlChecked = new Set(playlists.filter(p => p.songIds.includes(favId)).map(p => p.id));
+  favPlChecked = new Set(playlists.filter(p => plHasSong(p, fav)).map(p => p.id));
   document.getElementById('favpl-song').textContent = fav.title + (fav.artist ? ' — ' + fav.artist : '');
   renderFavPlList();
   document.getElementById('favpl-modal-bg').style.display = 'flex';
@@ -548,7 +550,8 @@ document.getElementById('favpl-new').addEventListener('click', () => {
   // after creating, put the song straight into the new playlist
   openPlModal(null, async (np) => {
     if (!np) return;
-    const ids = playlists.filter(p => p.songIds.includes(favId)).map(p => p.id);
+    const favObj = favorites.find(x => x.id === favId);
+    const ids = favObj ? playlists.filter(p => plHasSong(p, favObj)).map(p => p.id) : [];
     const data = await plApi(`/api/favorites/${favId}/playlists`, { playlistIds: [...new Set([...ids, np.id])] });
     if (data) { playlists = data.playlists; renderFavs(); }
   });
@@ -572,10 +575,10 @@ function renderFavs() {
   // Keep the practice panel (if open) in sync with whatever just changed —
   // close it if that favourite got removed, refresh its title/note if it
   // was edited, and always refresh the right-hand list either way.
-  if (currentPracticeFavId && !favorites.some(f => f.id === currentPracticeFavId)) {
+  if (currentPracticeFavId && !songById(currentPracticeFavId)) {
     closePracticePanel();
   } else if (currentPracticeFavId) {
-    const openFav = favorites.find(f => f.id === currentPracticeFavId);
+    const openFav = songById(currentPracticeFavId);
     if (openFav) {
       const { direct } = chordUrlForFav(openFav);
       document.getElementById('chord-panel-title').textContent = openFav.title + (openFav.artist ? ' — ' + openFav.artist : '');
@@ -588,14 +591,14 @@ function renderFavs() {
   renderPlaylistBar();
 
   const el = document.getElementById('fav-list');
-  if (!favorites.length) {
+  if (currentView === 'all' && !favorites.length) {
     el.innerHTML = '<div class="empty">ยังไม่มีเพลงโปรด — กดปุ่ม ＋ เพิ่มเพลงโปรด ด้านล่างได้เลย</div>';
     return;
   }
   const base = baseFavs();
   const visible = base.filter(matchesSearch);
   if (!visible.length) {
-    el.innerHTML = '<div class="empty">' + (currentView !== 'all' && !base.length ? 'Playlist นี้ยังไม่มีเพลง — กด "🎵 เลือกเพลงใน Playlist" ด้านบน' : 'ไม่พบเพลงโปรดที่ตรงกับคำค้นหา') + '</div>';
+    el.innerHTML = '<div class="empty">' + (currentView !== 'all' && !base.length ? 'Playlist นี้ยังไม่มีเพลง — กด "🎵 เพิ่มเพลงจาก Fav" ด้านบน (หรือกด 📁 Add to Playlist จากเพลงใน Event History)' : 'ไม่พบเพลงโปรดที่ตรงกับคำค้นหา') + '</div>';
     return;
   }
   // Reorder arrows move a song relative to its neighbours in the FULL
@@ -618,12 +621,17 @@ function renderFavs() {
           <div class="fav-title">${escapeHtml(f.title)}</div>
           <div class="fav-sub">${escapeHtml(f.artist || 'ไม่ระบุศิลปิน')} · ${chordDisplay(f)}</div>
         </div>
-        <div class="fav-actions">
+        ${currentView === 'all' ? `<div class="fav-actions">
           <button data-playlists="${f.id}" title="ใส่ใน Playlist">📁</button>
           <button class="btn-fav-request" data-request="${f.id}" title="ขอเพลงนี้">📣</button>
           <button class="btn-fav-edit" data-edit="${f.id}" title="แก้ไข">✏️</button>
           <button class="btn-fav-remove" data-remove="${f.id}" title="ลบ">🗑</button>
-        </div>
+        </div>` : `<div class="fav-actions">
+          <button data-plfav="${f.id}" title="เพิ่มใน Favourite">⭐</button>
+          <button class="btn-fav-request" data-request="${f.id}" title="ขอเพลงนี้">📣</button>
+          <button class="btn-fav-edit" data-pledit="${f.id}" title="แก้ไข">✏️</button>
+          <button class="btn-fav-remove" data-plremove="${f.id}" title="เอาออกจาก Playlist นี้">🗑</button>
+        </div>`}
       </div>
     </div>`;
   }).join('');
@@ -644,6 +652,22 @@ function renderFavs() {
   });
   el.querySelectorAll('button[data-playlists]').forEach(btn => {
     btn.addEventListener('click', () => openFavPlModal(btn.dataset.playlists));
+  });
+  el.querySelectorAll('button[data-plremove]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('เอาเพลงนี้ออกจาก Playlist นี้ใช่หรือไม่? (Favourite ไม่ถูกลบ)')) return;
+      const data = await plApi(`/api/playlists/${currentView}/songs/${btn.dataset.plremove}/remove`, {});
+      if (data) { playlists = data.playlists; renderFavs(); showToast('เอาออกจาก Playlist แล้ว'); }
+    });
+  });
+  el.querySelectorAll('button[data-plfav]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const data = await plApi(`/api/playlists/${currentView}/songs/${btn.dataset.plfav}/to-favourite`, {});
+      if (data) { favorites = data.favorites; renderFavs(); showToast(data.existed ? '⭐ มีใน Favourite อยู่แล้ว' : '⭐ เพิ่มใน Favourite แล้ว'); }
+    });
+  });
+  el.querySelectorAll('button[data-pledit]').forEach(btn => {
+    btn.addEventListener('click', () => { plEditSongPid = currentView; openFavModal(songById(btn.dataset.pledit)); });
   });
   el.querySelectorAll('button[data-request]').forEach(btn => {
     btn.addEventListener('click', () => openRequestModal(btn.dataset.request));
@@ -723,6 +747,7 @@ async function loadFavorites() {
 
 // ---- Add / Edit favourite modal (shared) ----
 let editingFavId = null;
+let plEditSongPid = null; // set when the modal edits a song inside a playlist
 
 function openFavModal(existing) {
   editingFavId = existing ? existing.id : null;
@@ -734,7 +759,7 @@ function openFavModal(existing) {
   document.getElementById('f-artist').value = existing ? (existing.artist || '') : '';
   document.getElementById('modal-bg').style.display = 'flex';
 }
-function closeAddModal() { document.getElementById('modal-bg').style.display = 'none'; editingFavId = null; }
+function closeAddModal() { document.getElementById('modal-bg').style.display = 'none'; editingFavId = null; plEditSongPid = null; }
 
 document.getElementById('btn-add').addEventListener('click', () => openFavModal(null));
 document.getElementById('modal-close').addEventListener('click', closeAddModal);
@@ -758,7 +783,8 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
     else chordId = chordInput.replace(/\D/g, '');
   }
 
-  const url = editingFavId ? `/api/favorites/${editingFavId}/edit` : '/api/favorites';
+  const inPl = !!(editingFavId && plEditSongPid);
+  const url = inPl ? `/api/playlists/${plEditSongPid}/songs/${editingFavId}/edit` : (editingFavId ? `/api/favorites/${editingFavId}/edit` : '/api/favorites');
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -766,7 +792,7 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
   });
   const data = await res.json();
   if (!res.ok) { showToast(data.error || 'เกิดข้อผิดพลาด'); return; }
-  favorites = data.favorites;
+  if (inPl) playlists = data.playlists; else favorites = data.favorites;
   renderFavs();
   const wasEditing = !!editingFavId;
   closeAddModal();
@@ -777,7 +803,7 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
 async function openRequestModal(favId) {
   reqTargetFavId = favId;
   reqSelectedVoteType = null;
-  const fav = favorites.find(f => f.id === favId);
+  const fav = songById(favId);
   document.getElementById('req-song-label').textContent = fav ? `${fav.title}${fav.artist ? ' — ' + fav.artist : ''}` : '';
   document.getElementById('f-req-requester').value = getGuestName();
   document.getElementById('f-req-target').value = '';

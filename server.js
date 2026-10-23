@@ -615,8 +615,8 @@ app.get('/api/spotify/status', requireDjAdminRole, (req, res) => {
 app.get('/api/spotify/playlists', requireDjAdminRole, (req, res) => {
   const out = [];
   db.users.forEach((u) => {
-    userPlaylists(u).filter((p) => p.visibility === 'public' && p.songIds.length).forEach((p) => {
-      out.push({ uid: u.id, pid: p.id, ownerName: ownerDisplayName(u), name: p.name, songCount: p.songIds.length, spotifyUrl: p.spotifyUrl || '' });
+    userPlaylists(u).filter((p) => p.visibility === 'public' && p.songs.length).forEach((p) => {
+      out.push({ uid: u.id, pid: p.id, ownerName: ownerDisplayName(u), name: p.name, songCount: p.songs.length, spotifyUrl: p.spotifyUrl || '' });
     });
   });
   out.sort((a, b) => a.ownerName.localeCompare(b.ownerName, 'th') || a.name.localeCompare(b.name, 'th'));
@@ -859,6 +859,37 @@ app.post('/api/songs/:id/to-favourite', requireLogin, (req, res) => {
   res.json({ ok: true, existed: false, favId: fav.id, favoriteCount: req.user.favorites.length });
 });
 
+// History events: which of MY playlists already contain this event song, and put it into chosen ones
+// (optionally a brand-new playlist) — without touching Favourite.
+app.get('/api/songs/:id/playlists', requireLogin, (req, res) => {
+  const sg = findSong(req.params.id);
+  if (!sg) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  const k = songKey(sg.title, sg.artist);
+  res.json({ playlists: userPlaylists(req.user).map((p) => ({ id: p.id, name: p.name, visibility: p.visibility, has: p.songs.some((x) => songKey(x.title, x.artist) === k) })) });
+});
+app.post('/api/songs/:id/playlists', requireLogin, (req, res) => {
+  const sg = findSong(req.params.id);
+  if (!sg) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  const b = req.body || {};
+  req.user.playlists = req.user.playlists || [];
+  const want = new Set(Array.isArray(b.playlistIds) ? b.playlistIds : []);
+  const newName = String(b.newName || '').trim().slice(0, 60);
+  if (newName) {
+    if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
+    const np = { id: newId(), name: newName, visibility: b.visibility === 'public' ? 'public' : 'private', songs: [], spotifyUrl: '', createdAt: Date.now() };
+    req.user.playlists.push(np); want.add(np.id);
+  }
+  const k = songKey(sg.title, sg.artist);
+  req.user.playlists.forEach((p) => {
+    p.songs = p.songs || [];
+    const has = p.songs.some((x) => songKey(x.title, x.artist) === k);
+    if (want.has(p.id) && !has) p.songs.push(copySongData(sg));
+    if (!want.has(p.id) && has) p.songs = p.songs.filter((x) => songKey(x.title, x.artist) !== k);
+  });
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
 app.post('/api/favorites/:favId/edit', requireLogin, (req, res) => {
   const fav = (req.user.favorites || []).find((f) => f.id === req.params.favId);
   if (!fav) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
@@ -889,7 +920,7 @@ app.post('/api/playlists', requireLogin, (req, res) => {
   const visibility = req.body && req.body.visibility === 'public' ? 'public' : 'private';
   const sUrl = cleanSpotifyUrl(req.body && req.body.spotifyUrl);
   if (sUrl === null) return res.status(400).json({ error: 'ลิงก์ Spotify ไม่ถูกต้อง (ต้องเป็น https://open.spotify.com/playlist/…)' });
-  const p = { id: newId(), name, visibility, songIds: [], spotifyUrl: sUrl, createdAt: Date.now() };
+  const p = { id: newId(), name, visibility, songs: [], spotifyUrl: sUrl, createdAt: Date.now() };
   req.user.playlists.push(p);
   saveDb();
   res.json({ ok: true, playlist: p, playlists: userPlaylists(req.user) });
@@ -921,15 +952,60 @@ app.post('/api/playlists/:pid/delete', requireLogin, (req, res) => {
   res.json({ ok: true, playlists: userPlaylists(req.user) });
 });
 
-// Replace the songs of one playlist: favIds = the chosen favourites (order kept).
+// Choose songs from Favourite for one playlist: favIds = the ticked favourites. Ticked ones that are not in the
+// playlist yet are copied in; unticked favourites that are in it (same title+artist) are taken out.
+// Songs in the playlist that are not in Favourite are left alone.
 app.post('/api/playlists/:pid/songs', requireLogin, (req, res) => {
   const p = findPlaylist(req.user, req.params.pid);
   if (!p) return res.status(404).json({ error: 'ไม่พบ Playlist' });
-  const valid = new Set((req.user.favorites || []).map((f) => f.id));
-  const ids = Array.isArray(req.body && req.body.favIds) ? req.body.favIds : [];
-  p.songIds = [...new Set(ids.filter((id) => valid.has(id)))];
+  const ids = new Set(Array.isArray(req.body && req.body.favIds) ? req.body.favIds : []);
+  p.songs = p.songs || [];
+  (req.user.favorites || []).forEach((f) => {
+    const k = songKey(f.title, f.artist);
+    const has = p.songs.some((x) => songKey(x.title, x.artist) === k);
+    if (ids.has(f.id) && !has) p.songs.push(copySongData(f));
+    if (!ids.has(f.id) && has) p.songs = p.songs.filter((x) => songKey(x.title, x.artist) !== k);
+  });
   saveDb();
   res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// Take one song out of a playlist (Favourite is untouched).
+app.post('/api/playlists/:pid/songs/:sid/remove', requireLogin, (req, res) => {
+  const p = findPlaylist(req.user, req.params.pid);
+  if (!p) return res.status(404).json({ error: 'ไม่พบ Playlist' });
+  p.songs = (p.songs || []).filter((x) => x.id !== req.params.sid);
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// Edit a song inside a playlist (title / artist / chord link).
+app.post('/api/playlists/:pid/songs/:sid/edit', requireLogin, (req, res) => {
+  const p = findPlaylist(req.user, req.params.pid);
+  const sg = p && (p.songs || []).find((x) => x.id === req.params.sid);
+  if (!sg) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  const { title, artist, chordUrl, chordId } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'ต้องระบุชื่อเพลง' });
+  const verifiedUrl = chordUrl && isDochordUrl(chordUrl) ? String(chordUrl).trim() : '';
+  const pendingId = !verifiedUrl && chordId ? String(chordId).trim().replace(/\D/g, '') : '';
+  sg.title = String(title).trim();
+  sg.artist = String(artist || '').trim();
+  sg.chordUrl = verifiedUrl;
+  sg.chordId = verifiedUrl ? extractChordId(verifiedUrl) : pendingId;
+  saveDb();
+  res.json({ ok: true, playlists: userPlaylists(req.user) });
+});
+
+// A playlist song → copy into MY Favourite.
+app.post('/api/playlists/:pid/songs/:sid/to-favourite', requireLogin, (req, res) => {
+  const p = findPlaylist(req.user, req.params.pid);
+  const sg = p && (p.songs || []).find((x) => x.id === req.params.sid);
+  if (!sg) return res.status(404).json({ error: 'ไม่พบเพลงนี้' });
+  req.user.favorites = req.user.favorites || [];
+  const exists = req.user.favorites.some((f) => songKey(f.title, f.artist) === songKey(sg.title, sg.artist));
+  if (!exists) req.user.favorites.push(copySongData(sg));
+  saveDb();
+  res.json({ ok: true, existed: exists, favorites: req.user.favorites });
 });
 
 // ---------- Public playlists of other people ----------
@@ -939,7 +1015,7 @@ function ownerDisplayName(u) {
   return employeeDisplayNameFor(u) || u.name || 'ผู้ใช้';
 }
 function publicSongsOf(owner, pl) {
-  return pl.songIds.map((id) => (owner.favorites || []).find((f) => f.id === id)).filter(Boolean)
+  return (pl.songs || [])
     .map((f) => ({ title: f.title, artist: f.artist || '', chordUrl: f.chordUrl || '', chordId: f.chordId || '' }));
 }
 
@@ -947,12 +1023,12 @@ app.get('/api/public-playlists', requireLogin, (req, res) => {
   const owners = [];
   db.users.forEach((u) => {
     if (u.id === req.user.id) return; // your own are in your Favourite page
-    const pls = userPlaylists(u).filter((p) => p.visibility === 'public' && p.songIds.length);
+    const pls = userPlaylists(u).filter((p) => p.visibility === 'public' && p.songs.length);
     if (!pls.length) return;
     owners.push({
       userId: u.id,
       ownerName: ownerDisplayName(u),
-      playlists: pls.map((p) => ({ id: p.id, name: p.name, spotifyUrl: p.spotifyUrl || '', songCount: p.songIds.length, songs: publicSongsOf(u, p).map((x) => ({ title: x.title, artist: x.artist })) })),
+      playlists: pls.map((p) => ({ id: p.id, name: p.name, spotifyUrl: p.spotifyUrl || '', songCount: p.songs.length, songs: publicSongsOf(u, p).map((x) => ({ title: x.title, artist: x.artist })) })),
     });
   });
   owners.sort((a, b) => a.ownerName.localeCompare(b.ownerName, 'th'));
@@ -1004,7 +1080,7 @@ app.post('/api/public-playlists/:uid/:pid/copy', requireLogin, (req, res) => {
   if (asPlaylist) {
     req.user.playlists = req.user.playlists || [];
     if (req.user.playlists.length >= MAX_PLAYLISTS) return res.status(400).json({ error: `สร้าง Playlist ได้สูงสุด ${MAX_PLAYLISTS} รายการ` });
-    playlist = { id: newId(), name: (found.pl.name + ' (จาก ' + ownerDisplayName(found.owner) + ')').slice(0, 60), visibility: 'private', songIds: [...new Set(idsForPlaylist)], createdAt: Date.now() };
+    playlist = { id: newId(), name: (found.pl.name + ' (จาก ' + ownerDisplayName(found.owner) + ')').slice(0, 60), visibility: 'private', songs: source.map(copySongData), createdAt: Date.now() };
     req.user.playlists.push(playlist);
   }
   saveDb();
@@ -1013,12 +1089,15 @@ app.post('/api/public-playlists/:uid/:pid/copy', requireLogin, (req, res) => {
 
 // From a favourite's side: which playlists should this song be in?
 app.post('/api/favorites/:favId/playlists', requireLogin, (req, res) => {
-  if (!(req.user.favorites || []).some((f) => f.id === req.params.favId)) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
+  const fav = (req.user.favorites || []).find((f) => f.id === req.params.favId);
+  if (!fav) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
   const want = new Set(Array.isArray(req.body && req.body.playlistIds) ? req.body.playlistIds : []);
+  const k = songKey(fav.title, fav.artist);
   (req.user.playlists || []).forEach((p) => {
-    const has = (p.songIds || []).includes(req.params.favId);
-    if (want.has(p.id) && !has) { p.songIds = (p.songIds || []).concat(req.params.favId); }
-    if (!want.has(p.id) && has) { p.songIds = p.songIds.filter((id) => id !== req.params.favId); }
+    p.songs = p.songs || [];
+    const has = p.songs.some((x) => songKey(x.title, x.artist) === k);
+    if (want.has(p.id) && !has) p.songs.push(copySongData(fav));
+    if (!want.has(p.id) && has) p.songs = p.songs.filter((x) => songKey(x.title, x.artist) !== k);
   });
   saveDb();
   res.json({ ok: true, playlists: userPlaylists(req.user) });
@@ -1167,7 +1246,7 @@ app.post('/api/inbox/:id/copy-favorites', requireLogin, (req, res) => {
 // Turns a saved favourite into a real, live Request List entry — same
 // duplicate-chordId guard as adding a song normally applies.
 app.post('/api/favorites/:favId/request', requireLogin, (req, res) => {
-  const fav = (req.user.favorites || []).find((f) => f.id === req.params.favId);
+  const fav = findUserSong(req.user, req.params.favId); // a Favourite song or a playlist song
   if (!fav) return res.status(404).json({ error: 'ไม่พบเพลงโปรดนี้' });
   const { clientId, voteType, targetName, voterName, eventId, confirmReplay } = req.body || {};
   if (!eventId || !findEvent(eventId)) {
@@ -1600,18 +1679,43 @@ function employeeDisplayNameFor(user) {
   return nick || first;
 }
 // ---------- Playlists (per person; built from their own Favourite songs) ----------
-// user.playlists = [{ id, name, visibility: 'private'|'public', songIds: [favId…], createdAt }]
+// user.playlists = [{ id, name, visibility: 'private'|'public', songs: [{ id, title, artist, chordUrl, chordId, addedAt }…], spotifyUrl, createdAt }]
+// A playlist keeps its OWN copies of songs, so removing a song from Favourite never changes a playlist
+// (and a playlist may hold songs that are not in the owner's Favourite).
 // Public ones will later be browsable by friends (separate page, not built yet).
 const MAX_PLAYLISTS = 30;
 function userPlaylists(user) {
-  const favIds = new Set((user.favorites || []).map((f) => f.id));
   return (user.playlists || []).map((p) => ({
     id: p.id, name: p.name, visibility: p.visibility === 'public' ? 'public' : 'private',
-    songIds: (p.songIds || []).filter((id) => favIds.has(id)), // drop songs removed from Favourite
+    songs: (p.songs || []).map((x) => ({ id: x.id, title: x.title, artist: x.artist || '', chordUrl: x.chordUrl || '', chordId: x.chordId || '', addedAt: x.addedAt || 0 })),
     createdAt: p.createdAt, spotifyUrl: p.spotifyUrl || '',
   }));
 }
 function findPlaylist(user, id) { return (user.playlists || []).find((p) => p.id === id); }
+const songKey = (t, a) => (String(t || '') + '|' + String(a || '')).trim().toLowerCase();
+function copySongData(x) { return { id: newId(), title: x.title, artist: x.artist || '', chordUrl: x.chordUrl || '', chordId: x.chordId || '', addedAt: Date.now() }; }
+// A song of this person: from Favourite or from any of their playlists (used for requests / edits).
+function findUserSong(user, id) {
+  const f = (user.favorites || []).find((x) => x.id === id);
+  if (f) return f;
+  for (const p of user.playlists || []) { const s = (p.songs || []).find((x) => x.id === id); if (s) return s; }
+  return null;
+}
+// One-time migration: old playlists stored favourite ids (songIds) → copy the songs into the playlist itself.
+function migratePlaylists() {
+  let changed = false;
+  (db.users || []).forEach((u) => {
+    (u.playlists || []).forEach((p) => {
+      if (!Array.isArray(p.songs)) {
+        p.songs = (p.songIds || []).map((id) => (u.favorites || []).find((f) => f.id === id)).filter(Boolean)
+          .map((f) => ({ id: f.id, title: f.title, artist: f.artist || '', chordUrl: f.chordUrl || '', chordId: f.chordId || '', addedAt: f.addedAt || Date.now() }));
+        changed = true;
+      }
+      if ('songIds' in p) { delete p.songIds; changed = true; }
+    });
+  });
+  if (changed) saveDb();
+}
 
 function reqRoles(req) { return userRoles(getSessionUser(req)); }
 
@@ -2389,6 +2493,7 @@ app.post('/api/admin/employees/sync', requireDjAdminRole, async (req, res) => {
   res.status(result.ok ? 200 : 502).json(result);
 });
 
+migratePlaylists();
 server.listen(PORT, () => {
   console.log(`ZG Live Jam server running on port ${PORT}`);
   console.log(`Admin PIN: ${ADMIN_PIN}`);
